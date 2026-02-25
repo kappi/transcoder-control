@@ -307,6 +307,20 @@ service = TranscodeService()
 # DB helpers (read-only for the web UI)
 # ---------------------------------------------------------------------------
 
+def db_meta_get(key: str) -> Optional[str]:
+    """Read a value from the meta table. Returns None if not found or table missing."""
+    if not STATE_DB.exists():
+        return None
+    try:
+        conn = sqlite3.connect(str(STATE_DB), timeout=5)
+        conn.row_factory = sqlite3.Row
+        row = conn.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()
+        conn.close()
+        return row["value"] if row else None
+    except Exception:
+        return None
+
+
 def db_get_jobs(limit: int = 200) -> list[dict]:
     if not STATE_DB.exists():
         return []
@@ -337,6 +351,24 @@ def db_reset_failed() -> int:
         return affected
     except Exception as e:
         logger.warning(f"DB reset failed: {e}")
+        return 0
+
+
+def db_reset_running() -> int:
+    """Reset all running jobs to pending so they get re-queued on next start."""
+    if not STATE_DB.exists():
+        return 0
+    try:
+        conn = sqlite3.connect(str(STATE_DB), timeout=5)
+        cur = conn.execute(
+            "UPDATE jobs SET status='pending', last_error=NULL WHERE status='running'"
+        )
+        conn.commit()
+        affected = cur.rowcount
+        conn.close()
+        return affected
+    except Exception as e:
+        logger.warning(f"DB reset running failed: {e}")
         return 0
 
 
@@ -422,12 +454,18 @@ async def post_config(cfg: ConfigModel):
 async def get_status():
     hw = await get_hw_metrics()
     ui = service.read_ui_state()
+    session_elapsed = round(service.get_uptime())
+    total_str = db_meta_get("total_elapsed_seconds")
+    prev_total = float(total_str) if total_str else 0.0
+    total_elapsed = round(prev_total + session_elapsed)
     return {
-        "service_status": service.status,
-        "uptime":         round(service.get_uptime()),
-        "pid":            service.proc.pid if service.is_running() else None,
-        "hw":             hw,
-        "ui":             ui,
+        "service_status":  service.status,
+        "uptime":          session_elapsed,
+        "session_elapsed": session_elapsed,
+        "total_elapsed":   total_elapsed,
+        "pid":             service.proc.pid if service.is_running() else None,
+        "hw":              hw,
+        "ui":              ui,
     }
 
 
@@ -468,6 +506,14 @@ async def get_jobs(limit: int = 200):
 @app.post("/api/jobs/reset-failed")
 async def reset_failed():
     n = db_reset_failed()
+    return {"ok": True, "affected": n}
+
+
+@app.post("/api/jobs/reset-running")
+async def reset_running():
+    if service.is_running():
+        raise HTTPException(400, "Cannot reset running jobs while service is active — stop first")
+    n = db_reset_running()
     return {"ok": True, "affected": n}
 
 
@@ -601,7 +647,9 @@ async def websocket_endpoint(ws: WebSocket):
                 msg = {
                     "type":           "state",
                     "service_status": service.status,
-                    "uptime":         round(service.get_uptime()),
+                    "uptime":          round(service.get_uptime()),
+                    "session_elapsed": round(service.get_uptime()),
+                    "total_elapsed":   round((float(db_meta_get("total_elapsed_seconds") or 0)) + service.get_uptime()),
                     "hw":             hw,
                     "ui":             ui,
                     "log_tail":       service.log_tail[-50:],

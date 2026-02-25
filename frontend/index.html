@@ -174,6 +174,8 @@ body {
 .btn-start:hover { background: rgba(200,241,53,.18); border-color: var(--lime); }
 .btn-stop  { border-color: var(--red-d);  color: var(--red);  background: rgba(255,77,109,.07); }
 .btn-stop:hover  { background: rgba(255,77,109,.18); border-color: var(--red); }
+.btn-warn  { border-color: #b07820; color: #e09820; background: rgba(224,152,32,.07); }
+.btn-warn:hover  { background: rgba(224,152,32,.18); border-color: #e09820; }
 .btn:disabled { opacity: .3; cursor: not-allowed; pointer-events: none; }
 
 [data-theme="light"] .btn-start { border-color: #a0c040; color: #4a7000; background: rgba(90,138,0,.08); }
@@ -566,7 +568,7 @@ canvas.sparkline { width: 100%; height: 28px; display: block; }
         <div class="progress-track"><div class="progress-fill" id="progress-fill" style="width:0%"></div></div>
         <div class="progress-time-row">
           <div class="progress-time-item">
-            <div class="progress-time-label">Elapsed</div>
+            <div class="progress-time-label">Elapsed (session / total)</div>
             <div class="progress-time-value" id="elapsed-val">—</div>
           </div>
           <div class="progress-time-item">
@@ -640,6 +642,7 @@ canvas.sparkline { width: 100%; height: 28px; display: block; }
           <span class="panel-header-icon">&#8801;</span> Job <span class="panel-title-accent">&nbsp;Queue</span>
           <div class="panel-actions">
             <button class="btn" onclick="resetFailed()">&#8635; Retry Failed</button>
+            <button class="btn btn-warn" onclick="resetRunning()">&#9654; Reset Running</button>
             <button class="btn" onclick="resetDone()">&#8635; Redo Done</button>
             <button class="btn btn-stop" onclick="confirmResetAll()">&#9888; Reset All</button>
             <button class="btn" onclick="clearDone()">&#10005; Clear Done</button>
@@ -893,10 +896,12 @@ function wsConnect() {
 }
 
 function handleState(msg) {
-  state.serviceStatus = msg.service_status || 'stopped';
-  state.ui     = msg.ui  || {};
-  state.hw     = msg.hw  || {};
-  state.uptime = msg.uptime || 0;
+  state.serviceStatus  = msg.service_status || 'stopped';
+  state.ui             = msg.ui  || {};
+  state.hw             = msg.hw  || {};
+  state.uptime         = msg.uptime || 0;
+  state.sessionElapsed = msg.session_elapsed || 0;
+  state.totalElapsed   = msg.total_elapsed   || 0;
   if (msg.log_tail && msg.log_tail.length) appendLogs(msg.log_tail);
   push(history.gpuUtil,  state.hw.gpu_util,  HIST_MAX);
   push(history.gpuPower, state.hw.gpu_power, HIST_MAX);
@@ -939,8 +944,16 @@ function renderProgress() {
   setText('s-failed',  failed);
   setText('s-skipped', skipped);
   setText('s-total',   total);
-  const elapsed = state.uptime || 0;
-  setText('elapsed-val', elapsed > 0 ? fmtDur(elapsed) : '—');
+  const elapsed        = state.uptime || 0;
+  const totalElapsed   = state.totalElapsed || elapsed;
+  const sessionElapsed = state.sessionElapsed || elapsed;
+
+  // Show "session / total" if total > session (i.e. there were previous sessions)
+  if (totalElapsed > sessionElapsed + 5) {
+    setText('elapsed-val', fmtDur(sessionElapsed) + ' / ' + fmtDur(totalElapsed));
+  } else {
+    setText('elapsed-val', elapsed > 0 ? fmtDur(elapsed) : '—');
+  }
 
   if (frac > 0.01 && elapsed > 5) {
     const remaining = (elapsed / frac) - elapsed;
@@ -953,9 +966,9 @@ function renderProgress() {
     const timeStr = finishDate.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
     const dateStr = finishDate.toLocaleDateString([], {month: 'short', day: 'numeric'});
     setText('finish-val', sameDay ? timeStr : dateStr + ' ' + timeStr);
-    // Files per hour speed
+    // Files per hour speed — use total elapsed for more accurate rate across restarts
     const processed = (state.ui.done||0) + (state.ui.failed||0) + (state.ui.skipped||0);
-    const filesPerHr = elapsed > 60 ? ((processed / elapsed) * 3600).toFixed(1) : '—';
+    const filesPerHr = totalElapsed > 60 ? ((processed / totalElapsed) * 3600).toFixed(1) : '—';
     setText('speed-val', filesPerHr !== '—' ? filesPerHr + ' files/hr' : '— files/hr');
   } else {
     setText('eta-val', '—');
@@ -1188,6 +1201,14 @@ async function resetFailed() {
   const r = await fetch('/api/jobs/reset-failed', {method:'POST'});
   const d = await r.json();
   toast(`Reset ${d.affected} failed jobs`, 'success'); loadJobs();
+}
+async function resetRunning() {
+  if (state.serviceStatus !== 'stopped') { toast('Stop the service before resetting running jobs', 'error'); return; }
+  if (!confirm('Reset all running jobs to pending? They will be re-transcoded from scratch on next Start.')) return;
+  const r = await fetch('/api/jobs/reset-running', {method:'POST'});
+  const d = await r.json();
+  if (r.ok) { toast(`Reset ${d.affected} running → pending`, 'success'); loadJobs(); }
+  else { const e = await r.json().catch(()=>{}); toast(e?.detail || 'Failed', 'error'); }
 }
 async function resetDone() {
   if (!confirm('Re-queue all completed jobs for re-transcoding?')) return;

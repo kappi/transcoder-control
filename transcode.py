@@ -75,6 +75,10 @@ CREATE TABLE IF NOT EXISTS jobs (
     last_error TEXT,
     updated_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS meta (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
 """
 
 
@@ -173,6 +177,62 @@ def db_get_runnable(max_retry: int) -> list[sqlite3.Row]:
             return rows
         finally:
             conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Session timing helpers
+# ---------------------------------------------------------------------------
+
+def db_meta_get(key: str) -> Optional[str]:
+    """Read a value from the meta table. Returns None if not found."""
+    with _db_lock:
+        conn = _db_open()
+        try:
+            row = conn.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()
+            return row["value"] if row else None
+        finally:
+            conn.close()
+
+
+def db_meta_set(key: str, value: str) -> None:
+    """Write a value to the meta table (upsert)."""
+    with _db_lock:
+        conn = _db_open()
+        try:
+            conn.execute(
+                "INSERT INTO meta(key,value) VALUES(?,?) "
+                "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                (key, value)
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+
+def session_start() -> float:
+    """
+    Mark the start of a new session. Returns the accumulated total elapsed
+    seconds from previous sessions (for display alongside session elapsed).
+    """
+    now = time.time()
+    db_meta_set("session_start_wall", str(now))
+    total_str = db_meta_get("total_elapsed_seconds")
+    return float(total_str) if total_str else 0.0
+
+
+def session_stop() -> None:
+    """
+    Called when the engine is about to exit. Accumulates session elapsed
+    into total_elapsed_seconds in the DB.
+    """
+    start_str = db_meta_get("session_start_wall")
+    if not start_str:
+        return
+    session_secs = time.time() - float(start_str)
+    total_str = db_meta_get("total_elapsed_seconds")
+    total = float(total_str) if total_str else 0.0
+    db_meta_set("total_elapsed_seconds", str(total + session_secs))
+    db_meta_set("session_start_wall", "")
 
 
 # ---------------------------------------------------------------------------
@@ -337,7 +397,13 @@ def discover_videos(input_dir: Path) -> list:
     return sorted(videos) + dvd_titles
 
 
-def compute_output_names(src, input_dir: Path, output_dir: Path, tv_mode: bool = False) -> tuple[Path, Path, str]:
+def compute_output_names(
+    src,
+    input_dir: Path,
+    output_dir: Path,
+    tv_mode: bool = False,
+    assigned: set = None,
+) -> tuple[Path, Path, str]:
     """
     Returns (out_dir, out_file_final, stem).
     Handles both regular Path objects and DVDTitle objects.
@@ -349,27 +415,41 @@ def compute_output_names(src, input_dir: Path, output_dir: Path, tv_mode: bool =
     TV mode (--tv-mode):
         Show/Season 01/S01E01.mkv -> output/Show/Season 01/S01E01.mp4
         preserves full relative path, keeps original filename stem
+
+    assigned: optional set of Path objects already assigned in this scan pass.
+        Used to avoid collisions when multiple source files map to the same
+        output name (e.g. multiple files in the same movie folder). Without
+        this, the on-disk check would miss in-progress encodes that haven't
+        created their output file yet.
     """
+    if assigned is None:
+        assigned = set()
+
+    def _unique(out_dir: Path, base: str) -> tuple[Path, Path, str]:
+        """Find a candidate name not on disk and not already assigned."""
+        candidate = base
+        counter = 0
+        while (out_dir / f"{candidate}.mp4").exists() or               (out_dir / f"{candidate}.mp4") in assigned:
+            counter += 1
+            candidate = f"{base}_{counter}"
+        result = out_dir / f"{candidate}.mp4"
+        assigned.add(result)
+        return out_dir, result, candidate
+
     if isinstance(src, DVDTitle):
-        # DVDs are always treated as single movies regardless of mode
         name = src.dvd_name
         out_dir = output_dir / name
-        candidate = name
-        counter = 0
-        while (out_dir / f"{candidate}.mp4").exists():
-            counter += 1
-            candidate = f"{name}_{counter}"
-        return out_dir, out_dir / f"{candidate}.mp4", candidate
+        return _unique(out_dir, name)
 
     if tv_mode:
-        # Mirror full relative path: Show/Season 01/S01E01.mkv
-        # -> output/Show/Season 01/S01E01.mp4
         try:
             rel = src.relative_to(input_dir)
         except ValueError:
             rel = Path(src.name)
         out_file = output_dir / rel.with_suffix(".mp4")
         out_dir = out_file.parent
+        # TV mode: filenames are unique by definition (full path preserved)
+        assigned.add(out_file)
         return out_dir, out_file, src.stem
 
     # Movies mode: collapse to top-level folder name
@@ -383,12 +463,7 @@ def compute_output_names(src, input_dir: Path, output_dir: Path, tv_mode: bool =
         name = src.stem
 
     out_dir = output_dir / name
-    candidate = name
-    counter = 0
-    while (out_dir / f"{candidate}.mp4").exists():
-        counter += 1
-        candidate = f"{name}_{counter}"
-    return out_dir, out_dir / f"{candidate}.mp4", candidate
+    return _unique(out_dir, name)
 
 
 # ---------------------------------------------------------------------------
@@ -587,11 +662,22 @@ def detect_filter(ffmpeg_bin: str, filter_name: str) -> bool:
         return False
 
 
-def detect_hwdec_cuda(ffmpeg_bin: str) -> bool:
+# Codecs supported by cuvid hardware decode.
+# Used both for detection and per-file codec gating.
+CUVID_CODECS = {
+    "hevc":  "hevc_cuvid",
+    "h264":  "h264_cuvid",
+    "vp9":   "vp9_cuvid",
+    "av1":   "av1_cuvid",
+    "mpeg2video": "mpeg2_cuvid",
+    "vc1":   "vc1_cuvid",
+}
+
+def detect_hwdec_cuda(ffmpeg_bin: str) -> set:
     """
-    Detect whether CUDA hardware decode is available by probing ffmpeg decoders.
-    Checks for hevc_cuvid and h264_cuvid — the two most common source codecs.
-    Returns True if at least one cuvid decoder is present.
+    Detect which cuvid decoders are available.
+    Returns a set of codec names (e.g. {"hevc", "h264"}) that have cuvid support.
+    Empty set means no hardware decode available.
     jellyfin-ffmpeg includes cuvid decoders by default when compiled with CUDA support.
     """
     try:
@@ -599,9 +685,13 @@ def detect_hwdec_cuda(ffmpeg_bin: str) -> bool:
             [ffmpeg_bin, "-decoders"],
             capture_output=True, text=True, timeout=30,
         )
-        return "hevc_cuvid" in result.stdout or "h264_cuvid" in result.stdout
+        available = set()
+        for codec, cuvid in CUVID_CODECS.items():
+            if cuvid in result.stdout:
+                available.add(codec)
+        return available
     except Exception:
-        return False
+        return set()
 
 
 # ---------------------------------------------------------------------------
@@ -617,16 +707,15 @@ def build_video_filter(
     force_cpu: bool,
     no_hwaccel: bool,
     has_tonemap_cuda: bool = False,
-    has_hwdec_cuda: bool = False,
+    has_hwdec_cuda: set = None,
 ) -> tuple[str, list[str], str]:
     """
     Returns (vf_string, extra_input_args, pipeline_label).
     extra_input_args: additional ffmpeg args before -i (e.g., hwaccel options).
 
-    When has_hwdec_cuda=True and GPU pipeline is active, hardware HEVC/H264
-    decode is used (-hwaccel cuda -hwaccel_output_format cuda). The decoded
-    frame arrives as a CUDA surface, so format= + hwupload_cuda are omitted.
-    This eliminates CPU decode load for 4K HDR content.
+    has_hwdec_cuda: set of codec names with cuvid support (e.g. {'hevc', 'h264'}).
+    When non-empty and GPU pipeline active, hardware decode is used per codec.
+    The decoded frame arrives as a CUDA surface, skipping format= + hwupload_cuda.
     """
     height = vs.get("height") or 0
     need_scale = height > max_height and height > 0
@@ -635,7 +724,10 @@ def build_video_filter(
 
     # Build pipeline label for logging
     gpu_pipeline = has_scale_cuda and not force_cpu and not no_hwaccel
-    hwdec = has_hwdec_cuda and gpu_pipeline
+    # Gate hwdec on the actual source codec — only use cuvid if the specific
+    # decoder is available. has_hwdec_cuda is a set of supported codec names.
+    src_codec = (vs.get("codec_name") or "").lower()
+    hwdec = gpu_pipeline and bool(has_hwdec_cuda) and (src_codec in (has_hwdec_cuda or set()))
     hwdec_tag = "+hwdec" if hwdec else ""
     if hdr and has_tonemap_cuda and has_scale_cuda and not force_cpu and not no_hwaccel:
         label = f"HDR->SDR(GPU-CUDA-tonemap_cuda{hwdec_tag}+NVENC)"
@@ -755,7 +847,13 @@ def build_video_filter(
         # No extra input args: CPU decodes, GPU only scales and encodes.
         return vf, [], label
 
-    # No GPU scale or not needed: direct or plain CPU format
+    # No GPU scale or not needed.
+    # If hwdec is active the frame is on GPU — must hwdownload before format=
+    # If no scale needed and hwdec active: hwdownload → format=yuv420p
+    if hwdec and not need_scale:
+        dl_fmt = "p010le" if src_10bit else "nv12"
+        vf = f"hwdownload,format={dl_fmt},format=yuv420p"
+        return vf, ["-hwaccel", "cuda", "-hwaccel_output_format", "cuda"], label
     if need_scale:
         vf = f"scale=-2:{max_height}:flags=lanczos,format=yuv420p"
     else:
@@ -1006,7 +1104,7 @@ def transcode_job(
     worker_id: int,
     ui_state: "UIStateWriter" = None,
     has_tonemap_cuda: bool = False,
-    has_hwdec_cuda: bool = False,
+    has_hwdec_cuda: set = None,
 ) -> bool:
     """
     Transcode a single file. Returns True on success.
@@ -1442,7 +1540,7 @@ def worker_thread(
     stop_event: threading.Event,
     ui_state: UIStateWriter,
     has_tonemap_cuda: bool = False,
-    has_hwdec_cuda: bool = False,
+    has_hwdec_cuda: set = None,
 ) -> None:
     while not stop_event.is_set():
         try:
@@ -1552,23 +1650,32 @@ def main() -> None:
     # Only enabled when GPU pipeline is active (no_hwaccel=False).
     # nvidia-patch removes the 3-session NVENC limit so hwdec no longer
     # competes with NVENC sessions — all workers can decode on GPU freely.
-    has_hwdec_cuda    = detect_hwdec_cuda(args.ffmpeg)              and not args.no_hwaccel
+    _hwdec_set        = detect_hwdec_cuda(args.ffmpeg) if not args.no_hwaccel else set()
+    has_hwdec_cuda    = _hwdec_set   # set of codec names with cuvid support
     logger.info(
         f"Filter availability: scale_cuda={has_scale_cuda} "
         f"zscale={has_zscale} tonemap_cuda={has_tonemap_cuda} "
-        f"hwdec_cuda={has_hwdec_cuda}"
+        f"hwdec_cuda={sorted(has_hwdec_cuda)}"
     )
 
     # Connect to DB
     db_connect(args.state_db)
+
+    # Start session timer — returns accumulated total from previous sessions
+    _session_total_before = session_start()
+    logger.info(f"Session started. Previous total elapsed: {int(_session_total_before)}s")
 
     # Discover and register jobs
     videos = discover_videos(input_dir)
     logger.info(f"Found {len(videos)} video files.")
 
     tv_mode = getattr(args, "tv_mode", False)
+    _assigned_outputs: set = set()  # track assigned paths within this scan to avoid collisions
     for src_path in videos:
-        out_dir, out_file, stem = compute_output_names(src_path, input_dir, output_dir, tv_mode=tv_mode)
+        out_dir, out_file, stem = compute_output_names(
+            src_path, input_dir, output_dir,
+            tv_mode=tv_mode, assigned=_assigned_outputs,
+        )
         db_upsert_job(str(src_path), str(out_dir), str(out_file))
 
         if args.skip_existing and out_file.exists():
@@ -1611,6 +1718,7 @@ def main() -> None:
     def handle_signal(signum, frame):
         logger.info("Received stop signal, draining queue...")
         stop_event.set()
+        session_stop()  # persist elapsed before workers drain
         # Empty the queue so workers see empty and stop taking new jobs
         while not job_queue.empty():
             try:
@@ -1659,6 +1767,9 @@ def main() -> None:
         f"Engine finished | done={progress.done} failed={progress.failed} "
         f"skipped={progress.skipped}"
     )
+
+    # Persist session elapsed to DB for next-start total display
+    session_stop()
 
     ui_state.flush(engine_done=True)
 
