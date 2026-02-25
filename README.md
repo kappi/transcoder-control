@@ -3,7 +3,10 @@
 A self-hosted, GPU-accelerated video transcoding pipeline for pre-converting a movie/TV library to HEVC MP4 for Jellyfin direct play. Built for an NVIDIA GPU with a web dashboard for monitoring and control.
 
 ---
+## Screenshots
 
+![Dashboard](screenshots/dashboard.png)
+---
 ## Features
 
 - **NVIDIA NVENC** hardware encoding (`hevc_nvenc`) — fast, efficient H.265 output
