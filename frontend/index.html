@@ -1,0 +1,1263 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>TRANSCODER // CONTROL</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=Syne+Mono&display=swap" rel="stylesheet">
+<style>
+/* ── Theme variables ───────────────────────────────────────────────────────── */
+:root {
+  --lime:   #c8f135;
+  --lime-d: #4a5a10;
+  --pink:   #ff6eb4;
+  --pink-d: #6e1a4a;
+  --teal:   #2de0c8;
+  --teal-d: #0d5a50;
+  --orange: #ff8c42;
+  --orng-d: #6e3010;
+  --red:    #ff4d6d;
+  --red-d:  #6e1025;
+  --blue:   #5bc8ff;
+  --radius: 10px;
+  --radius-s: 5px;
+  --mono: 'Syne Mono', monospace;
+  --sans: 'Space Grotesk', sans-serif;
+}
+
+[data-theme="dark"] {
+  --bg:          #0f0f14;
+  --bg1:         #15151d;
+  --bg2:         #1b1b26;
+  --bg3:         #22222f;
+  --border:      #2c2c40;
+  --border2:     #3d3d58;
+  --text:        #e4e4f0;
+  --text-dim:    #8080a8;
+  --text-muted:  #48485f;
+  --accent:      var(--lime);
+  --accent-d:    var(--lime-d);
+  --accent-glow: rgba(200,241,53,.13);
+  --card-shadow: 0 2px 12px rgba(0,0,0,.4);
+  --topbar-bg:   #111119;
+  --nav-bg:      #111119;
+}
+
+[data-theme="light"] {
+  --bg:          #f0f0f8;
+  --bg1:         #ffffff;
+  --bg2:         #f5f5ff;
+  --bg3:         #ebebf8;
+  --border:      #d8d8ee;
+  --border2:     #c0c0dc;
+  --text:        #1a1a2e;
+  --text-dim:    #5050780;
+  --text-muted:  #9090b8;
+  --accent:      #7c3aed;
+  --accent-d:    #ddd6fe;
+  --accent-glow: rgba(124,58,237,.1);
+  --card-shadow: 0 2px 12px rgba(100,100,160,.12);
+  --topbar-bg:   #ffffff;
+  --nav-bg:      #ffffff;
+  --lime:   #5a8a00;
+  --pink:   #cc2277;
+  --teal:   #0088aa;
+  --orange: #dd6600;
+  --red:    #cc1133;
+  --blue:   #0066cc;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html { height: 100%; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 14px;
+  line-height: 1.5;
+  min-height: 100%;
+  transition: background .2s, color .2s;
+}
+
+/* ── Layout ─────────────────────────────────────────────────────────────────── */
+.layout {
+  display: grid;
+  grid-template-rows: 52px 1fr;
+  grid-template-columns: 1fr;
+  min-height: 100vh;
+}
+
+/* ── Topbar ──────────────────────────────────────────────────────────────────── */
+.topbar {
+  grid-column: 1/-1;
+  background: var(--topbar-bg);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  padding: 0 14px;
+  gap: 10px;
+  z-index: 200;
+  position: sticky;
+  top: 0;
+}
+
+.topbar-logo {
+  font-family: var(--mono);
+  font-size: 14px;
+  color: var(--accent);
+  white-space: nowrap;
+  flex-shrink: 0;
+  letter-spacing: .02em;
+}
+[data-theme="dark"] .topbar-logo { text-shadow: 0 0 18px var(--accent); }
+.topbar-logo span { color: var(--text-muted); }
+
+.status-pill {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 11px; letter-spacing: .07em; text-transform: uppercase;
+  color: var(--text-dim); white-space: nowrap;
+}
+.status-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--text-muted);
+  transition: background .3s, box-shadow .3s;
+  flex-shrink: 0;
+}
+.status-dot.running  { background: var(--lime);   box-shadow: 0 0 10px var(--lime); }
+.status-dot.stopped  { background: var(--text-muted); }
+.status-dot.stopping { background: var(--orange); box-shadow: 0 0 10px var(--orange); animation: pulse 1s infinite; }
+.status-dot.starting { background: var(--teal);   box-shadow: 0 0 10px var(--teal);  animation: pulse 1s infinite; }
+@keyframes pulse { 0%,100%{opacity:1}50%{opacity:.2} }
+
+.topbar-stat {
+  font-size: 11px; color: var(--text-dim);
+  display: none; align-items: center; gap: 5px;
+  padding: 3px 9px;
+  border: 1px solid var(--border); border-radius: var(--radius-s);
+  white-space: nowrap;
+}
+.topbar-stat .val { color: var(--accent); font-weight: 600; }
+
+.topbar-right { margin-left: auto; display: flex; align-items: center; gap: 6px; }
+
+/* theme toggle */
+.theme-btn {
+  width: 32px; height: 32px;
+  border-radius: 50%;
+  border: 1px solid var(--border2);
+  background: var(--bg2);
+  color: var(--text-dim);
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 15px;
+  transition: all .15s;
+  flex-shrink: 0;
+}
+.theme-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+.btn {
+  font-family: var(--sans);
+  font-size: 12px; font-weight: 600;
+  letter-spacing: .06em; text-transform: uppercase;
+  padding: 6px 13px;
+  border-radius: var(--radius-s);
+  border: 1px solid var(--border2);
+  background: var(--bg2); color: var(--text-dim);
+  cursor: pointer;
+  transition: all .15s;
+  white-space: nowrap;
+}
+.btn:hover { border-color: var(--text-dim); color: var(--text); background: var(--bg3); }
+.btn-start { border-color: var(--lime-d); color: var(--lime); background: rgba(200,241,53,.07); }
+.btn-start:hover { background: rgba(200,241,53,.18); border-color: var(--lime); }
+.btn-stop  { border-color: var(--red-d);  color: var(--red);  background: rgba(255,77,109,.07); }
+.btn-stop:hover  { background: rgba(255,77,109,.18); border-color: var(--red); }
+.btn:disabled { opacity: .3; cursor: not-allowed; pointer-events: none; }
+
+[data-theme="light"] .btn-start { border-color: #a0c040; color: #4a7000; background: rgba(90,138,0,.08); }
+[data-theme="light"] .btn-start:hover { background: rgba(90,138,0,.15); }
+[data-theme="light"] .btn-stop  { border-color: #e08090; color: #cc1133; background: rgba(204,17,51,.07); }
+
+/* ws dot */
+.ws-indicator { width: 6px; height: 6px; border-radius: 50%; background: var(--text-muted); transition: all .3s; flex-shrink: 0; }
+.ws-indicator.connected { background: var(--lime); box-shadow: 0 0 6px var(--lime); }
+.ws-indicator.disconnected { background: var(--red); }
+
+/* ── Bottom nav (mobile) ────────────────────────────────────────────────────── */
+.bottom-nav {
+  position: fixed;
+  bottom: 0; left: 0; right: 0;
+  background: var(--nav-bg);
+  border-top: 1px solid var(--border);
+  display: flex;
+  z-index: 150;
+  padding-bottom: env(safe-area-inset-bottom);
+}
+.bnav-item {
+  flex: 1;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 3px;
+  padding: 8px 4px;
+  cursor: pointer;
+  color: var(--text-muted);
+  font-size: 10px; letter-spacing: .04em; text-transform: uppercase;
+  font-weight: 600;
+  transition: color .15s;
+  border: none; background: none;
+  -webkit-tap-highlight-color: transparent;
+}
+.bnav-item.active { color: var(--accent); }
+.bnav-icon { font-size: 18px; line-height: 1; }
+
+/* ── Sidebar (desktop) ──────────────────────────────────────────────────────── */
+.sidebar {
+  display: none;
+  background: var(--nav-bg);
+  border-right: 1px solid var(--border);
+  overflow-y: auto; overflow-x: hidden;
+}
+.sidebar::-webkit-scrollbar { width: 4px; }
+.sidebar::-webkit-scrollbar-thumb { background: var(--border2); }
+.nav-section {
+  padding: 16px 16px 4px;
+  font-size: 10px; letter-spacing: .15em; text-transform: uppercase;
+  color: var(--text-muted); font-weight: 700;
+}
+.nav-item {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 16px;
+  cursor: pointer; color: var(--text-dim);
+  font-size: 13px;
+  border-left: 3px solid transparent;
+  transition: all .12s; user-select: none;
+}
+.nav-item:hover { background: var(--bg2); color: var(--text); }
+.nav-item.active { background: var(--bg2); color: var(--accent); border-left-color: var(--accent); }
+.nav-icon { font-size: 16px; width: 20px; text-align: center; flex-shrink: 0; }
+.nav-badge {
+  margin-left: auto;
+  background: var(--bg3); border: 1px solid var(--border);
+  border-radius: 4px; padding: 1px 7px;
+  font-size: 10px; color: var(--text-muted); font-family: var(--mono);
+}
+
+/* ── Main ───────────────────────────────────────────────────────────────────── */
+.main {
+  overflow-y: auto; overflow-x: hidden;
+  display: flex; flex-direction: column;
+  padding-bottom: 64px; /* bottom nav height */
+}
+.main::-webkit-scrollbar { width: 5px; }
+.main::-webkit-scrollbar-thumb { background: var(--border2); }
+
+.page { display: none; flex-direction: column; gap: 12px; padding: 12px; flex: 1; }
+.page.active { display: flex; }
+
+/* ── Panel ──────────────────────────────────────────────────────────────────── */
+.panel {
+  background: var(--bg1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--card-shadow);
+  overflow: hidden;
+}
+.panel-header {
+  display: flex; align-items: center; gap: 10px;
+  padding: 11px 14px; border-bottom: 1px solid var(--border);
+  font-size: 12px; font-weight: 700;
+  letter-spacing: .08em; text-transform: uppercase; color: var(--text-dim);
+}
+.panel-header-icon { color: var(--accent); font-size: 15px; }
+.panel-title-accent { color: var(--accent); }
+.panel-actions { margin-left: auto; display: flex; gap: 5px; flex-wrap: wrap; }
+.panel-body { padding: 14px; }
+
+/* ── Progress card ──────────────────────────────────────────────────────────── */
+.progress-wrap {
+  background: var(--bg1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--card-shadow);
+  padding: 16px;
+}
+.progress-header { display: flex; align-items: baseline; gap: 10px; margin-bottom: 12px; }
+.progress-pct {
+  font-family: var(--mono);
+  font-size: 42px; font-weight: 400; color: var(--accent); line-height: 1;
+}
+[data-theme="dark"] .progress-pct { text-shadow: 0 0 24px var(--accent); }
+.progress-label { font-size: 11px; color: var(--text-dim); letter-spacing: .08em; text-transform: uppercase; font-weight: 600; }
+.progress-eta { margin-left: auto; font-size: 11px; color: var(--text-muted); font-family: var(--mono); }
+.progress-track {
+  height: 6px; background: var(--bg3); border-radius: 3px; overflow: hidden; margin-bottom: 12px;
+}
+.progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--teal), var(--lime));
+  border-radius: 3px; transition: width .6s ease;
+}
+[data-theme="dark"] .progress-fill { box-shadow: 0 0 12px rgba(200,241,53,.4); }
+.progress-stats { display: flex; gap: 14px; flex-wrap: wrap; }
+.stat-item { display: flex; align-items: center; gap: 5px; font-size: 12px; }
+.stat-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+.stat-dot.done    { background: var(--lime); }
+.stat-dot.failed  { background: var(--red); }
+.stat-dot.skip    { background: var(--text-muted); }
+.stat-dot.active  { background: var(--orange); }
+.stat-dot.pending { background: var(--border2); }
+.stat-label { color: var(--text-muted); }
+.stat-val   { color: var(--text); font-weight: 600; font-family: var(--mono); }
+
+/* ── Metrics grid ───────────────────────────────────────────────────────────── */
+.metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px;
+}
+.metric-card {
+  background: var(--bg1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--card-shadow);
+  padding: 12px 14px;
+  transition: border-color .3s;
+}
+.metric-card.warn   { border-color: var(--orange); }
+.metric-card.danger { border-color: var(--red); }
+.metric-label { font-size: 10px; letter-spacing: .1em; text-transform: uppercase; color: var(--text-muted); font-weight: 700; margin-bottom: 4px; }
+.metric-value { font-family: var(--mono); font-size: 22px; color: var(--text); line-height: 1.1; }
+.metric-unit { font-size: 11px; color: var(--text-dim); margin-left: 2px; }
+.metric-bar { height: 3px; background: var(--bg3); border-radius: 2px; margin-top: 8px; overflow: hidden; }
+.metric-bar-fill { height: 100%; background: var(--teal); border-radius: 2px; transition: width .5s ease, background .3s; }
+.metric-bar-fill.good   { background: var(--teal); }
+.metric-bar-fill.warn   { background: var(--orange); }
+.metric-bar-fill.danger { background: var(--red); }
+
+/* ── Worker cards ───────────────────────────────────────────────────────────── */
+.worker-card {
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  transition: border-color .2s;
+}
+.worker-card.active { border-color: var(--accent); }
+.wc-header { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.worker-id-badge {
+  font-family: var(--mono);
+  font-size: 11px; font-weight: 400;
+  background: var(--bg3); border: 1px solid var(--border2);
+  color: var(--accent); padding: 2px 8px; border-radius: var(--radius-s);
+  flex-shrink: 0;
+}
+.wc-file { font-size: 12px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+.wc-idle { font-size: 12px; color: var(--text-muted); font-style: italic; }
+.wc-pipe { font-size: 10px; color: var(--teal); letter-spacing: .04em; text-transform: uppercase; margin-bottom: 8px; font-family: var(--mono); }
+.wc-stats { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12px; margin-bottom: 8px; }
+.wc-stat-label { color: var(--text-muted); }
+.wc-stat-val { color: var(--text); font-weight: 600; font-family: var(--mono); }
+.wc-fps-val { color: var(--lime); font-weight: 600; font-family: var(--mono); }
+.wc-pct { color: var(--accent); font-family: var(--mono); font-weight: 400; }
+[data-theme="dark"] .wc-fps-val { text-shadow: 0 0 10px var(--lime); }
+.wc-bar-wrap { height: 4px; background: var(--bg3); border-radius: 2px; overflow: hidden; }
+.wc-bar { height: 100%; background: linear-gradient(90deg, var(--teal), var(--lime)); border-radius: 2px; transition: width .5s ease; }
+
+/* ── Tables ─────────────────────────────────────────────────────────────────── */
+.data-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.data-table th {
+  text-align: left; padding: 8px 10px;
+  font-size: 10px; letter-spacing: .1em; text-transform: uppercase;
+  color: var(--text-muted); border-bottom: 1px solid var(--border); font-weight: 700;
+}
+.data-table td {
+  padding: 9px 10px; border-bottom: 1px solid var(--border);
+  vertical-align: middle; color: var(--text-dim);
+}
+.data-table tr:last-child td { border-bottom: none; }
+.data-table tbody tr:hover td { background: rgba(128,128,200,.04); }
+.data-table th.r, .data-table td.r { text-align: right; }
+.jobs-scroll { overflow-x: auto; max-height: calc(100vh - 160px); overflow-y: auto; }
+.jobs-scroll .data-table th { position: sticky; top: 0; background: var(--bg1); z-index: 2; }
+
+.badge {
+  display: inline-block; padding: 2px 8px; border-radius: var(--radius-s);
+  font-size: 10px; letter-spacing: .07em; text-transform: uppercase;
+  font-weight: 700; border: 1px solid;
+}
+.badge-done    { color: var(--lime);   border-color: var(--lime-d);  background: rgba(200,241,53,.08); }
+.badge-running { color: var(--orange); border-color: var(--orng-d);  background: rgba(255,140,66,.08); }
+.badge-pending { color: var(--text-dim); border-color: var(--border); }
+.badge-failed  { color: var(--red);    border-color: var(--red-d);   background: rgba(255,77,109,.08); }
+.badge-skipped { color: var(--text-muted); border-color: var(--border); }
+
+[data-theme="light"] .badge-done    { color: #4a7000; border-color: #a0c040; background: rgba(90,138,0,.1); }
+[data-theme="light"] .badge-running { color: #cc5500; border-color: #dd8844; background: rgba(204,85,0,.1); }
+[data-theme="light"] .badge-failed  { color: #cc1133; border-color: #e08090; background: rgba(204,17,51,.1); }
+
+.job-src { color: var(--text-dim); max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; font-family: var(--mono); }
+.job-err { font-size: 10px; color: var(--red); max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: help; }
+
+/* ── Config ─────────────────────────────────────────────────────────────────── */
+.config-grid { display: grid; grid-template-columns: 1fr; gap: 12px; }
+.field-group { display: flex; flex-direction: column; gap: 5px; }
+.field-group.full { grid-column: 1/-1; }
+.field-label { font-size: 10px; letter-spacing: .1em; text-transform: uppercase; color: var(--text-muted); font-weight: 700; }
+.field-hint  { font-size: 11px; color: var(--text-muted); }
+
+input[type="text"], input[type="number"], select, textarea {
+  background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius-s);
+  color: var(--text); font-family: var(--mono); font-size: 13px;
+  padding: 8px 11px; width: 100%; outline: none; transition: border-color .15s;
+  appearance: none; -webkit-appearance: none;
+}
+input:focus, select:focus, textarea:focus {
+  border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-glow);
+}
+select option { background: var(--bg2); }
+
+.toggle-row { display: flex; align-items: flex-start; gap: 12px; padding: 6px 0; cursor: pointer; }
+.toggle { position: relative; width: 38px; height: 20px; flex-shrink: 0; margin-top: 2px; }
+.toggle input { opacity: 0; width: 0; height: 0; position: absolute; }
+.toggle-slider {
+  position: absolute; inset: 0; background: var(--bg3); border: 1px solid var(--border2);
+  border-radius: 10px; cursor: pointer; transition: .2s;
+}
+.toggle-slider::before {
+  content: ''; position: absolute; width: 14px; height: 14px;
+  left: 2px; top: 2px; background: var(--text-muted); border-radius: 50%; transition: .2s;
+}
+.toggle input:checked + .toggle-slider { background: var(--accent); border-color: var(--accent); }
+.toggle input:checked + .toggle-slider::before { transform: translateX(18px); background: #fff; }
+[data-theme="dark"] .toggle input:checked + .toggle-slider { background: var(--lime-d); border-color: var(--lime); }
+[data-theme="dark"] .toggle input:checked + .toggle-slider::before { background: var(--lime); }
+.toggle-text { flex: 1; }
+.toggle-text .field-label { display: block; cursor: pointer; }
+
+.section-divider { grid-column: 1/-1; border: none; border-top: 1px solid var(--border); margin: 4px 0; }
+
+/* ── Log ─────────────────────────────────────────────────────────────────────── */
+.log-viewer {
+  background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-s);
+  padding: 12px; height: 380px; overflow-y: auto;
+  font-size: 11px; line-height: 1.7; font-family: var(--mono);
+}
+.log-viewer::-webkit-scrollbar { width: 4px; }
+.log-viewer::-webkit-scrollbar-thumb { background: var(--border2); }
+.log-line { white-space: pre-wrap; word-break: break-all; color: var(--text-dim); }
+.log-line.err  { color: var(--red); }
+.log-line.warn { color: var(--orange); }
+.log-line.done { color: var(--lime); }
+
+/* ── Sparklines ─────────────────────────────────────────────────────────────── */
+.sparkline-row { display: grid; grid-template-columns: 50px 1fr; align-items: center; gap: 8px; font-size: 10px; color: var(--text-muted); margin-top: 8px; }
+canvas.sparkline { width: 100%; height: 28px; display: block; }
+
+/* ── Scan result ─────────────────────────────────────────────────────────────── */
+.scan-result {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 6px 14px; background: var(--bg2); border: 1px solid var(--border);
+  border-radius: var(--radius-s); font-size: 12px; color: var(--text-dim);
+}
+.scan-result .num { color: var(--accent); font-weight: 700; font-family: var(--mono); }
+
+.empty-state { text-align: center; padding: 40px; color: var(--text-muted); font-size: 13px; letter-spacing: .06em; }
+
+/* ── Toasts ──────────────────────────────────────────────────────────────────── */
+#toast-container {
+  position: fixed; bottom: 74px; right: 14px;
+  display: flex; flex-direction: column; gap: 8px;
+  z-index: 9000; pointer-events: none;
+}
+.toast {
+  background: var(--bg2); border: 1px solid var(--border2); border-radius: var(--radius);
+  padding: 11px 16px; font-size: 13px; color: var(--text);
+  animation: slideIn .2s ease; max-width: 300px;
+  pointer-events: auto; box-shadow: var(--card-shadow);
+}
+.toast.success { border-left: 3px solid var(--lime); }
+.toast.error   { border-left: 3px solid var(--red);   }
+.toast.info    { border-left: 3px solid var(--teal);  }
+@keyframes slideIn { from { transform: translateX(16px); opacity: 0; } }
+
+* { scrollbar-width: thin; scrollbar-color: var(--border2) transparent; }
+
+/* ── Desktop breakpoint ───────────────────────────────────────────────────────── */
+@media (min-width: 768px) {
+  .layout {
+    grid-template-columns: 220px 1fr;
+    grid-template-rows: 52px 1fr;
+    height: 100vh;
+    overflow: hidden;
+  }
+  .topbar {
+    grid-column: 1/-1;
+    position: static;
+  }
+  .topbar-stat { display: flex; }
+  .sidebar { display: block; overflow-y: auto; }
+  .main { overflow-y: auto; padding-bottom: 0; }
+  .bottom-nav { display: none; }
+  .metrics-grid { grid-template-columns: repeat(3, 1fr); }
+  .config-grid { grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); }
+  #toast-container { bottom: 18px; right: 18px; }
+  .page { padding: 14px; }
+}
+
+@media (min-width: 1200px) {
+  .metrics-grid { grid-template-columns: repeat(6, 1fr); }
+  .layout { grid-template-columns: 240px 1fr; }
+}
+</style>
+</head>
+<body>
+<div class="layout">
+
+  <!-- Topbar -->
+  <header class="topbar">
+    <div class="topbar-logo">TRANSCODE <span>// CTRL</span></div>
+    <div class="status-pill">
+      <div class="status-dot" id="service-dot"></div>
+      <span id="service-label">STOPPED</span>
+    </div>
+    <div class="topbar-stat">UPTIME <span class="val" id="uptime-val">—</span></div>
+    <div class="topbar-stat">WS <div class="ws-indicator" id="ws-dot"></div></div>
+    <div class="topbar-right">
+      <button class="theme-btn" onclick="toggleTheme()" title="Toggle theme" id="theme-btn">🌙</button>
+      <button class="btn btn-start" id="btn-start" onclick="serviceStart()">&#9654; Start</button>
+      <button class="btn btn-stop"  id="btn-stop"  onclick="serviceStop()" disabled>&#9632; Stop</button>
+    </div>
+  </header>
+
+  <!-- Sidebar (desktop) -->
+  <nav class="sidebar">
+    <div class="nav-section">Monitor</div>
+    <div class="nav-item active" onclick="showPage('dashboard')" data-page="dashboard"><span class="nav-icon">&#11041;</span> Dashboard</div>
+    <div class="nav-item" onclick="showPage('workers')"  data-page="workers"><span class="nav-icon">&#9881;</span> Workers <span class="nav-badge" id="nav-workers-badge">0</span></div>
+    <div class="nav-item" onclick="showPage('jobs')"     data-page="jobs"><span class="nav-icon">&#8801;</span> Job Queue <span class="nav-badge" id="nav-jobs-badge">—</span></div>
+    <div class="nav-item" onclick="showPage('logs')"     data-page="logs"><span class="nav-icon">&#9636;</span> Logs</div>
+    <div class="nav-section">System</div>
+    <div class="nav-item" onclick="showPage('hardware')" data-page="hardware"><span class="nav-icon">&#9635;</span> Hardware</div>
+    <div class="nav-section">Config</div>
+    <div class="nav-item" onclick="showPage('config')"   data-page="config"><span class="nav-icon">&#10022;</span> Settings</div>
+  </nav>
+
+  <!-- Main -->
+  <main class="main">
+
+    <!-- DASHBOARD -->
+    <div class="page active" id="page-dashboard">
+      <div class="progress-wrap">
+        <div class="progress-header">
+          <div class="progress-pct" id="pct-val">0<span style="font-size:22px">%</span></div>
+          <div>
+            <div class="progress-label">Overall Progress</div>
+            <div class="progress-eta" id="eta-val">ETA: —</div>
+          </div>
+        </div>
+        <div class="progress-track"><div class="progress-fill" id="progress-fill" style="width:0%"></div></div>
+        <div class="progress-stats">
+          <div class="stat-item"><div class="stat-dot done"></div>   <span class="stat-label">Done</span>    <span class="stat-val" id="s-done">0</span></div>
+          <div class="stat-item"><div class="stat-dot active"></div> <span class="stat-label">Active</span>  <span class="stat-val" id="s-active">0</span></div>
+          <div class="stat-item"><div class="stat-dot pending"></div><span class="stat-label">Pending</span> <span class="stat-val" id="s-pending">0</span></div>
+          <div class="stat-item"><div class="stat-dot failed"></div> <span class="stat-label">Failed</span>  <span class="stat-val" id="s-failed">0</span></div>
+          <div class="stat-item"><div class="stat-dot skip"></div>   <span class="stat-label">Skipped</span> <span class="stat-val" id="s-skipped">0</span></div>
+          <div class="stat-item"><span class="stat-label">Total</span> <span class="stat-val" id="s-total">0</span></div>
+        </div>
+      </div>
+      <div class="metrics-grid" id="quick-metrics">
+        <div class="metric-card" id="mc-gpu-util">
+          <div class="metric-label">GPU Util</div>
+          <div class="metric-value" id="m-gpu-util">—<span class="metric-unit">%</span></div>
+          <div class="metric-bar"><div class="metric-bar-fill" id="mb-gpu-util" style="width:0%"></div></div>
+        </div>
+        <div class="metric-card" id="mc-gpu-mem">
+          <div class="metric-label">VRAM</div>
+          <div class="metric-value"><span id="m-gpu-mem">—</span><span class="metric-unit">MiB</span></div>
+          <div class="metric-bar"><div class="metric-bar-fill" id="mb-gpu-mem" style="width:0%"></div></div>
+        </div>
+        <div class="metric-card" id="mc-gpu-power">
+          <div class="metric-label">GPU Power</div>
+          <div class="metric-value" id="m-gpu-power">—<span class="metric-unit">W</span></div>
+          <div class="metric-bar"><div class="metric-bar-fill" id="mb-gpu-power" style="width:0%"></div></div>
+        </div>
+        <div class="metric-card" id="mc-gpu-temp">
+          <div class="metric-label">GPU Temp</div>
+          <div class="metric-value" id="m-gpu-temp">—<span class="metric-unit">°C</span></div>
+          <div class="metric-bar"><div class="metric-bar-fill" id="mb-gpu-temp" style="width:0%"></div></div>
+        </div>
+        <div class="metric-card" id="mc-cpu">
+          <div class="metric-label">CPU Util</div>
+          <div class="metric-value" id="m-cpu">—<span class="metric-unit">%</span></div>
+          <div class="metric-bar"><div class="metric-bar-fill" id="mb-cpu" style="width:0%"></div></div>
+        </div>
+        <div class="metric-card" id="mc-ram">
+          <div class="metric-label">RAM</div>
+          <div class="metric-value"><span id="m-ram">—</span><span class="metric-unit">GiB</span></div>
+          <div class="metric-bar"><div class="metric-bar-fill" id="mb-ram" style="width:0%"></div></div>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="panel-header"><span class="panel-header-icon">&#9881;</span> Active <span class="panel-title-accent">&nbsp;Workers</span></div>
+        <div style="padding:10px" id="workers-dash-cards"></div>
+      </div>
+    </div>
+
+    <!-- WORKERS -->
+    <div class="page" id="page-workers">
+      <div class="panel">
+        <div class="panel-header"><span class="panel-header-icon">&#9881;</span> Worker <span class="panel-title-accent">&nbsp;Status</span></div>
+        <div style="padding:10px" id="workers-full-cards"></div>
+      </div>
+    </div>
+
+    <!-- JOBS -->
+    <div class="page" id="page-jobs">
+      <div class="panel">
+        <div class="panel-header">
+          <span class="panel-header-icon">&#8801;</span> Job <span class="panel-title-accent">&nbsp;Queue</span>
+          <div class="panel-actions">
+            <button class="btn" onclick="resetFailed()">&#8635; Retry Failed</button>
+            <button class="btn" onclick="resetDone()">&#8635; Redo Done</button>
+            <button class="btn btn-stop" onclick="confirmResetAll()">&#9888; Reset All</button>
+            <button class="btn" onclick="clearDone()">&#10005; Clear Done</button>
+            <button class="btn btn-stop" onclick="confirmWipeDb()">&#128465; Wipe DB</button>
+            <button class="btn" onclick="loadJobs()">&#8635; Refresh</button>
+          </div>
+        </div>
+        <div class="jobs-scroll">
+          <table class="data-table">
+            <thead><tr><th>Status</th><th class="r">Tries</th><th>Source</th><th>Output</th><th>Updated</th><th>Error</th></tr></thead>
+            <tbody id="jobs-body"><tr><td colspan="6" class="empty-state">Loading...</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- LOGS -->
+    <div class="page" id="page-logs">
+      <div class="panel">
+        <div class="panel-header">
+          <span class="panel-header-icon">&#9636;</span> Log <span class="panel-title-accent">&nbsp;Output</span>
+          <div class="panel-actions">
+            <label style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--text-dim);cursor:pointer">
+              <input type="checkbox" id="log-autoscroll" checked style="width:auto;padding:0;cursor:pointer"> Auto-scroll
+            </label>
+            <button class="btn" onclick="clearLog()">&#10005; Clear</button>
+          </div>
+        </div>
+        <div class="panel-body" style="padding:10px">
+          <div class="log-viewer" id="log-viewer"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- HARDWARE -->
+    <div class="page" id="page-hardware">
+      <div class="panel">
+        <div class="panel-header">
+          <span class="panel-header-icon">&#9635;</span> Hardware <span class="panel-title-accent">&nbsp;Monitor</span>
+          <span style="margin-left:auto;font-size:10px;color:var(--text-muted);font-family:var(--mono)" id="gpu-name-label"></span>
+        </div>
+        <div class="panel-body">
+          <div class="metrics-grid">
+            <div class="metric-card" id="hw-mc-gpu">
+              <div class="metric-label">GPU Utilization</div>
+              <div class="metric-value" id="hw-gpu-util">—<span class="metric-unit">%</span></div>
+              <div class="metric-bar"><div class="metric-bar-fill" id="hw-mb-gpu" style="width:0%"></div></div>
+              <div class="sparkline-row"><span>History</span><canvas class="sparkline" id="spark-gpu-util" height="28"></canvas></div>
+            </div>
+            <div class="metric-card">
+              <div class="metric-label">VRAM Used / Total</div>
+              <div class="metric-value"><span id="hw-vram-used">—</span><span class="metric-unit">MiB</span> <span style="font-size:13px;color:var(--text-muted)">/ <span id="hw-vram-total">—</span></span></div>
+              <div class="metric-bar"><div class="metric-bar-fill" id="hw-mb-vram" style="width:0%"></div></div>
+            </div>
+            <div class="metric-card">
+              <div class="metric-label">GPU Power Draw</div>
+              <div class="metric-value" id="hw-gpu-power">—<span class="metric-unit">W</span></div>
+              <div class="metric-bar"><div class="metric-bar-fill" id="hw-mb-power" style="width:0%"></div></div>
+              <div class="sparkline-row"><span>History</span><canvas class="sparkline" id="spark-gpu-power" height="28"></canvas></div>
+            </div>
+            <div class="metric-card" id="hw-mc-temp">
+              <div class="metric-label">GPU Temperature</div>
+              <div class="metric-value" id="hw-gpu-temp">—<span class="metric-unit">°C</span></div>
+              <div class="metric-bar"><div class="metric-bar-fill" id="hw-mb-temp" style="width:0%"></div></div>
+            </div>
+            <div class="metric-card" id="hw-mc-cpu">
+              <div class="metric-label">CPU Utilization</div>
+              <div class="metric-value" id="hw-cpu-util">—<span class="metric-unit">%</span></div>
+              <div class="metric-bar"><div class="metric-bar-fill" id="hw-mb-cpu" style="width:0%"></div></div>
+              <div class="sparkline-row"><span>History</span><canvas class="sparkline" id="spark-cpu" height="28"></canvas></div>
+            </div>
+            <div class="metric-card" id="hw-mc-ram">
+              <div class="metric-label">RAM Used / Total</div>
+              <div class="metric-value"><span id="hw-ram-used">—</span><span class="metric-unit">GiB</span> <span style="font-size:13px;color:var(--text-muted)">/ <span id="hw-ram-total">—</span></span></div>
+              <div class="metric-bar"><div class="metric-bar-fill" id="hw-mb-ram" style="width:0%"></div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- SETTINGS -->
+    <div class="page" id="page-config">
+      <div class="panel">
+        <div class="panel-header">
+          <span class="panel-header-icon">&#10022;</span> Settings
+          <div class="panel-actions">
+            <button class="btn" onclick="scanInput()" id="scan-btn">&#128269; Scan</button>
+            <span id="scan-result-wrap"></span>
+            <button class="btn btn-start" onclick="saveConfig()">&#10003; Save</button>
+          </div>
+        </div>
+        <div class="panel-body">
+          <div class="config-grid">
+            <div class="field-group full">
+              <div class="field-label">Input Directory</div>
+              <input type="text" id="cfg-input_dir" placeholder="/input">
+            </div>
+            <div class="field-group full">
+              <div class="field-label">Output Directory</div>
+              <input type="text" id="cfg-output_dir" placeholder="/output">
+            </div>
+            <hr class="section-divider">
+            <div class="field-group">
+              <div class="field-label">Workers</div>
+              <input type="number" id="cfg-jobs" min="1" max="16" value="4">
+              <div class="field-hint">Parallel transcode jobs</div>
+            </div>
+            <div class="field-group">
+              <div class="field-label">Threads</div>
+              <input type="number" id="cfg-threads" min="0" max="64" value="0">
+              <div class="field-hint">FFmpeg threads per job (0=auto)</div>
+            </div>
+            <div class="field-group">
+              <div class="field-label">Max Height (px)</div>
+              <input type="number" id="cfg-max_height" min="240" max="2160" value="720">
+            </div>
+            <div class="field-group">
+              <div class="field-label">CQ Value</div>
+              <input type="number" id="cfg-cq" min="1" max="51" value="28">
+              <div class="field-hint">Lower = better quality</div>
+            </div>
+            <div class="field-group">
+              <div class="field-label">NVENC Preset</div>
+              <select id="cfg-preset">
+                <option value="p1">p1 (fastest)</option>
+                <option value="p2">p2</option>
+                <option value="p3">p3</option>
+                <option value="p4" selected>p4</option>
+                <option value="p5">p5</option>
+                <option value="p6">p6</option>
+                <option value="p7">p7 (best)</option>
+              </select>
+            </div>
+            <div class="field-group">
+              <div class="field-label">Rate Control</div>
+              <select id="cfg-rc">
+                <option value="vbr_hq" selected>vbr_hq</option>
+                <option value="cbr">cbr</option>
+                <option value="cbr_hq">cbr_hq</option>
+                <option value="vbr">vbr</option>
+              </select>
+            </div>
+            <hr class="section-divider">
+            <div class="field-group">
+              <div class="field-label">Audio Bitrate</div>
+              <input type="text" id="cfg-audio_bitrate" placeholder="96k">
+              <div class="field-hint">Per-track AAC bitrate</div>
+            </div>
+            <div class="field-group full">
+              <div class="field-label">Audio Filter</div>
+              <input type="text" id="cfg-audio_filter" placeholder="acompressor=...">
+              <div class="field-hint">FFmpeg audio filter chain</div>
+            </div>
+            <hr class="section-divider">
+            <div class="field-group">
+              <div class="field-label">Retry Count</div>
+              <input type="number" id="cfg-retry" min="0" max="10" value="1">
+            </div>
+            <div class="field-group">
+              <div class="field-label">Retry Backoff (s)</div>
+              <input type="number" id="cfg-retry_backoff" min="0" max="300" step="0.5" value="5">
+            </div>
+            <div class="field-group">
+              <div class="field-label">Probe Size</div>
+              <input type="text" id="cfg-probesize" placeholder="200M">
+            </div>
+            <div class="field-group">
+              <div class="field-label">Analyze Duration</div>
+              <input type="text" id="cfg-analyzeduration" placeholder="200M">
+            </div>
+            <hr class="section-divider">
+            <div class="field-group full">
+              <div style="display:flex;flex-direction:column;gap:2px">
+                <label class="toggle-row">
+                  <span class="toggle"><input type="checkbox" id="cfg-skip_existing"><span class="toggle-slider"></span></span>
+                  <div class="toggle-text"><span class="field-label">Skip Existing</span></div>
+                </label>
+                <label class="toggle-row">
+                  <span class="toggle"><input type="checkbox" id="cfg-copy_all_subs"><span class="toggle-slider"></span></span>
+                  <div class="toggle-text"><span class="field-label">Copy All Subs</span></div>
+                </label>
+                <label class="toggle-row">
+                  <span class="toggle"><input type="checkbox" id="cfg-no_hwaccel"><span class="toggle-slider"></span></span>
+                  <div class="toggle-text"><span class="field-label">No HW Accel</span></div>
+                </label>
+                <label class="toggle-row">
+                  <span class="toggle"><input type="checkbox" id="cfg-dry_run"><span class="toggle-slider"></span></span>
+                  <div class="toggle-text"><span class="field-label">Dry Run</span></div>
+                </label>
+                <label class="toggle-row">
+                  <span class="toggle"><input type="checkbox" id="cfg-tv_mode"><span class="toggle-slider"></span></span>
+                  <div class="toggle-text">
+                    <span class="field-label">TV Show Mode</span>
+                    <div class="field-hint">Preserves Season/Episode folder structure</div>
+                  </div>
+                </label>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </main>
+</div>
+
+<!-- Bottom nav (mobile) -->
+<nav class="bottom-nav">
+  <button class="bnav-item active" onclick="showPage('dashboard')" data-bpage="dashboard"><span class="bnav-icon">&#11041;</span>Dash</button>
+  <button class="bnav-item" onclick="showPage('workers')"  data-bpage="workers"><span class="bnav-icon">&#9881;</span>Workers</button>
+  <button class="bnav-item" onclick="showPage('jobs')"     data-bpage="jobs"><span class="bnav-icon">&#8801;</span>Jobs</button>
+  <button class="bnav-item" onclick="showPage('logs')"     data-bpage="logs"><span class="bnav-icon">&#9636;</span>Logs</button>
+  <button class="bnav-item" onclick="showPage('hardware')" data-bpage="hardware"><span class="bnav-icon">&#9635;</span>HW</button>
+  <button class="bnav-item" onclick="showPage('config')"   data-bpage="config"><span class="bnav-icon">&#10022;</span>Settings</button>
+</nav>
+
+<div id="toast-container"></div>
+
+<script>
+// -- Theme ------------------------------------------------------------------
+function toggleTheme() {
+  const html = document.documentElement;
+  const isDark = html.getAttribute('data-theme') === 'dark';
+  html.setAttribute('data-theme', isDark ? 'light' : 'dark');
+  document.getElementById('theme-btn').textContent = isDark ? '🌙' : '☀️';
+  localStorage.setItem('theme', isDark ? 'light' : 'dark');
+}
+(function() {
+  const saved = localStorage.getItem('theme') || 'dark';
+  document.documentElement.setAttribute('data-theme', saved);
+  // btn text set after DOM ready
+})();
+
+// -- State ------------------------------------------------------------------
+const state = { serviceStatus: 'stopped', ui: {}, hw: {}, logLines: [], uptime: 0 };
+const history = { gpuUtil: [], gpuPower: [], cpu: [] };
+const HIST_MAX = 120;
+
+// -- WebSocket --------------------------------------------------------------
+let ws = null;
+function wsConnect() {
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  ws = new WebSocket(`${proto}//${location.host}/ws`);
+  ws.onopen  = () => { setClass('ws-dot', 'ws-indicator connected'); };
+  ws.onclose = () => { setClass('ws-dot', 'ws-indicator disconnected'); setTimeout(wsConnect, 3000); };
+  ws.onerror = () => ws.close();
+  ws.onmessage = (e) => {
+    try { const msg = JSON.parse(e.data); if (msg.type === 'state') handleState(msg); } catch(err) {}
+  };
+}
+
+function handleState(msg) {
+  state.serviceStatus = msg.service_status || 'stopped';
+  state.ui     = msg.ui  || {};
+  state.hw     = msg.hw  || {};
+  state.uptime = msg.uptime || 0;
+  if (msg.log_tail && msg.log_tail.length) appendLogs(msg.log_tail);
+  push(history.gpuUtil,  state.hw.gpu_util,  HIST_MAX);
+  push(history.gpuPower, state.hw.gpu_power, HIST_MAX);
+  push(history.cpu,      state.hw.cpu_util,  HIST_MAX);
+  renderAll();
+}
+
+function push(arr, val, max) {
+  if (val === undefined || val === null) return;
+  arr.push(val); if (arr.length > max) arr.shift();
+}
+
+// -- Render -----------------------------------------------------------------
+function renderAll() {
+  renderTopbar(); renderProgress(); renderMetrics();
+  renderWorkers(); renderHardwarePage(); drawSparklines(); updateNavBadges();
+}
+
+function renderTopbar() {
+  const s = state.serviceStatus;
+  setClass('service-dot', 'status-dot ' + s);
+  setText('service-label', s.toUpperCase());
+  document.getElementById('btn-start').disabled = (s === 'running' || s === 'starting');
+  document.getElementById('btn-stop').disabled  = (s === 'stopped' || s === 'stopping');
+  setText('uptime-val', state.uptime > 0 ? fmtDur(state.uptime) : '--');
+}
+
+function renderProgress() {
+  const ui = state.ui;
+  const total = ui.total || 0, done = ui.done || 0, failed = ui.failed || 0;
+  const skipped = ui.skipped || 0, running = ui.running || 0;
+  const processed = done + failed + skipped;
+  const frac = total > 0 ? processed / total : 0;
+  const pct = Math.round(frac * 100);
+  document.getElementById('pct-val').innerHTML = `${pct}<span style="font-size:22px">%</span>`;
+  document.getElementById('progress-fill').style.width = `${frac * 100}%`;
+  setText('s-done',    done);
+  setText('s-active',  running);
+  setText('s-pending', Math.max(0, total - done - failed - skipped - running));
+  setText('s-failed',  failed);
+  setText('s-skipped', skipped);
+  setText('s-total',   total);
+  const elapsed = state.uptime || 0;
+  setText('eta-val', (frac > 0.01 && elapsed > 5) ? 'ETA: ' + fmtDur((elapsed / frac) - elapsed) : 'ETA: --');
+}
+
+function renderMetrics() {
+  const hw = state.hw;
+  setMetric('gpu-util',  hw.gpu_util,    '%',   hw.gpu_util,              100,              true);
+  setMetric('gpu-mem',   hw.gpu_mem_used,'MiB', hw.gpu_mem_used,          hw.gpu_mem_total, true);
+  setMetric('gpu-power', hw.gpu_power,   'W',   hw.gpu_power,             300,              false);
+  setMetric('gpu-temp',  hw.gpu_temp,    'C',   hw.gpu_temp,              100,              true);
+  setMetric('cpu',       hw.cpu_util,    '%',   hw.cpu_util,              100,              true);
+  const ru = hw.ram_used || 0, rt = hw.ram_total || 1;
+  setText('m-ram', (ru/1024).toFixed(1));
+  setBar('mb-ram', (ru/rt)*100, barCls((ru/rt)*100, true));
+  setCardCls('mc-ram', barCls((ru/rt)*100, true));
+}
+
+function setMetric(id, val, unit, fillVal, fillMax, warn) {
+  const el = document.getElementById('m-' + id);
+  if (el) el.innerHTML = (val !== undefined ? (Number.isInteger(val) ? val : val.toFixed(1)) : '--') + `<span class="metric-unit">${unit}</span>`;
+  const pct = (fillVal !== undefined && fillMax) ? (fillVal / fillMax) * 100 : 0;
+  const cls = barCls(pct, warn);
+  setBar('mb-' + id, pct, cls);
+  setCardCls('mc-' + id, cls);
+}
+
+function setBar(id, pct, cls) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.style.width = Math.min(100, Math.max(0, pct)) + '%';
+  el.className = 'metric-bar-fill ' + cls;
+}
+
+function setCardCls(id, cls) {
+  const el = document.getElementById(id);
+  if (el) el.className = 'metric-card ' + cls;
+}
+
+function barCls(pct, warn) {
+  if (!warn) return 'good';
+  if (pct >= 90) return 'danger';
+  if (pct >= 70) return 'warn';
+  return 'good';
+}
+
+function renderWorkers() {
+  const workers = (state.ui && state.ui.workers) || {};
+  const slots = Math.max((state.ui && state.ui.total_workers) || 0, Object.keys(workers).length);
+  const html = buildWorkerCards(workers, slots);
+  const dash = document.getElementById('workers-dash-cards');
+  const full = document.getElementById('workers-full-cards');
+  if (dash) dash.innerHTML = html;
+  if (full) full.innerHTML = html;
+}
+
+function buildWorkerCards(workers, slots) {
+  if (slots === 0) return '<div class="empty-state">No workers active</div>';
+  let html = '<div style="display:flex;flex-direction:column;gap:8px">';
+  for (let i = 0; i < slots; i++) {
+    const w = workers[String(i)];
+    if (w && w.filename) {
+      const prog = Math.round((w.progress || 0) * 100);
+      const framesStr = w.total_frames > 0
+        ? `${(w.frames||0).toLocaleString()} / ${w.total_frames.toLocaleString()}`
+        : (w.frames||0).toLocaleString();
+      html += `<div class="worker-card active">
+        <div class="wc-header">
+          <span class="worker-id-badge">W${i}</span>
+          <span class="wc-file" title="${esc(w.filename)}">${esc(w.filename)}</span>
+          <span class="wc-pct">${prog}%</span>
+        </div>
+        <div class="wc-pipe">${esc(w.pipeline||'--')}</div>
+        <div class="wc-stats">
+          <span><span class="wc-stat-label">FPS </span><span class="wc-fps-val">${(w.fps||0).toFixed(1)}</span></span>
+          <span><span class="wc-stat-label">Frames </span><span class="wc-stat-val">${framesStr}</span></span>
+          <span><span class="wc-stat-label">Elapsed </span><span class="wc-stat-val">${fmtDur(w.elapsed||0)}</span></span>
+        </div>
+        <div class="wc-bar-wrap"><div class="wc-bar" style="width:${prog}%"></div></div>
+      </div>`;
+    } else {
+      html += `<div class="worker-card">
+        <div class="wc-header">
+          <span class="worker-id-badge">W${i}</span>
+          <span class="wc-idle">-- waiting --</span>
+        </div>
+      </div>`;
+    }
+  }
+  return html + '</div>';
+}
+
+function renderHardwarePage() {
+  const hw = state.hw;
+  if (hw.gpu_name) setText('gpu-name-label', hw.gpu_name);
+  const gpu = hw.gpu_util || 0;
+  document.getElementById('hw-gpu-util').innerHTML = `${gpu}<span class="metric-unit">%</span>`;
+  setBar('hw-mb-gpu', gpu, barCls(gpu, true)); setCardCls('hw-mc-gpu', barCls(gpu, true));
+  const vu = hw.gpu_mem_used||0, vt = hw.gpu_mem_total||1;
+  setText('hw-vram-used', vu); setText('hw-vram-total', vt);
+  setBar('hw-mb-vram', (vu/vt)*100, barCls((vu/vt)*100, true));
+  const pw = hw.gpu_power||0;
+  document.getElementById('hw-gpu-power').innerHTML = `${pw}<span class="metric-unit">W</span>`;
+  setBar('hw-mb-power', (pw/300)*100, 'good');
+  const temp = hw.gpu_temp||0;
+  document.getElementById('hw-gpu-temp').innerHTML = `${temp}<span class="metric-unit">C</span>`;
+  setBar('hw-mb-temp', (temp/100)*100, temp>=85?'danger':temp>=70?'warn':'good');
+  setCardCls('hw-mc-temp', temp>=85?'danger':temp>=70?'warn':'good');
+  const cpu = hw.cpu_util||0;
+  document.getElementById('hw-cpu-util').innerHTML = `${cpu.toFixed(1)}<span class="metric-unit">%</span>`;
+  setBar('hw-mb-cpu', cpu, barCls(cpu, true)); setCardCls('hw-mc-cpu', barCls(cpu, true));
+  const ru = hw.ram_used||0, rt = hw.ram_total||1;
+  setText('hw-ram-used',  (ru/1024).toFixed(1));
+  setText('hw-ram-total', (rt/1024).toFixed(1));
+  setBar('hw-mb-ram', (ru/rt)*100, barCls((ru/rt)*100, true));
+  setCardCls('hw-mc-ram', barCls((ru/rt)*100, true));
+}
+
+// -- Sparklines -------------------------------------------------------------
+function drawSparklines() {
+  const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+  const limeC  = isDark ? '#c8f135' : '#5a8a00';
+  const blueC  = isDark ? '#5bc8ff' : '#0066cc';
+  const tealC  = isDark ? '#2de0c8' : '#0088aa';
+  drawSpark('spark-gpu-util',  history.gpuUtil,  100, limeC);
+  drawSpark('spark-gpu-power', history.gpuPower, 300, blueC);
+  drawSpark('spark-cpu',       history.cpu,      100, tealC);
+}
+
+function drawSpark(id, data, maxVal, color) {
+  const canvas = document.getElementById(id);
+  if (!canvas || !data.length) return;
+  const W = canvas.offsetWidth, H = canvas.offsetHeight;
+  if (!W || !H) return;
+  canvas.width  = W * devicePixelRatio;
+  canvas.height = H * devicePixelRatio;
+  const ctx = canvas.getContext('2d');
+  ctx.scale(devicePixelRatio, devicePixelRatio);
+  ctx.clearRect(0, 0, W, H);
+  const step = W / Math.max(data.length - 1, 1);
+  const grad = ctx.createLinearGradient(0, 0, 0, H);
+  grad.addColorStop(0, color + '55'); grad.addColorStop(1, color + '00');
+  ctx.beginPath();
+  data.forEach((v,i) => { const x=i*step, y=H-(v/maxVal)*H; i===0?ctx.moveTo(x,y):ctx.lineTo(x,y); });
+  ctx.lineTo(W,H); ctx.lineTo(0,H); ctx.closePath();
+  ctx.fillStyle = grad; ctx.fill();
+  ctx.beginPath();
+  data.forEach((v,i) => { const x=i*step, y=H-(v/maxVal)*H; i===0?ctx.moveTo(x,y):ctx.lineTo(x,y); });
+  ctx.strokeStyle = color; ctx.lineWidth = 1.5; ctx.stroke();
+}
+
+function updateNavBadges() {
+  const workers = (state.ui && state.ui.workers) || {};
+  setText('nav-workers-badge', Object.keys(workers).length);
+}
+
+// -- Navigation -------------------------------------------------------------
+function showPage(name) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  document.querySelectorAll('.bnav-item').forEach(n => n.classList.remove('active'));
+  const page = document.getElementById('page-' + name);
+  const nav  = document.querySelector('[data-page="' + name + '"]');
+  const bnav = document.querySelector('[data-bpage="' + name + '"]');
+  if (page) page.classList.add('active');
+  if (nav)  nav.classList.add('active');
+  if (bnav) bnav.classList.add('active');
+  if (name === 'jobs') loadJobs();
+}
+
+// -- Logs -------------------------------------------------------------------
+const _seenLogs = new Set();
+function appendLogs(lines) {
+  const viewer = document.getElementById('log-viewer');
+  const scroll = document.getElementById('log-autoscroll').checked;
+  lines.forEach(line => {
+    if (_seenLogs.has(line)) return;
+    _seenLogs.add(line);
+    if (_seenLogs.size > 2000) { const first = _seenLogs.values().next().value; _seenLogs.delete(first); }
+    const div = document.createElement('div');
+    div.className = 'log-line' +
+      (line.includes('[ERROR]') ? ' err'  :
+       line.includes('[WARN')   ? ' warn' :
+       line.includes('DONE')    ? ' done' : '');
+    div.textContent = line;
+    viewer.appendChild(div);
+  });
+  if (viewer.children.length > 1000) { while (viewer.children.length > 800) viewer.removeChild(viewer.firstChild); }
+  if (scroll) viewer.scrollTop = viewer.scrollHeight;
+}
+function clearLog() { document.getElementById('log-viewer').innerHTML = ''; _seenLogs.clear(); }
+
+// -- Jobs -------------------------------------------------------------------
+async function loadJobs() {
+  try {
+    const r = await fetch('/api/jobs?limit=500');
+    const jobs = await r.json();
+    setText('nav-jobs-badge', jobs.length);
+    const body = document.getElementById('jobs-body');
+    if (!jobs.length) { body.innerHTML = '<tr><td colspan="6" class="empty-state">No jobs in database</td></tr>'; return; }
+    body.innerHTML = jobs.map(j => `<tr>
+      <td><span class="badge badge-${j.status}">${j.status}</span></td>
+      <td class="r" style="color:var(--text-dim);font-family:var(--mono)">${j.attempts}</td>
+      <td><span class="job-src" title="${esc(j.src)}">${esc(basename(j.src))}</span></td>
+      <td><span class="job-src" title="${esc(j.out_file)}">${esc(basename(j.out_file))}</span></td>
+      <td style="color:var(--text-muted);font-size:11px;white-space:nowrap;font-family:var(--mono)">${j.updated_at||''}</td>
+      <td>${j.last_error?`<span class="job-err" title="${esc(j.last_error)}">${esc(j.last_error.slice(0,80))}</span>`:''}</td>
+    </tr>`).join('');
+  } catch(e) { toast('Failed to load jobs', 'error'); }
+}
+
+async function resetFailed() {
+  const r = await fetch('/api/jobs/reset-failed', {method:'POST'});
+  const d = await r.json();
+  toast(`Reset ${d.affected} failed jobs`, 'success'); loadJobs();
+}
+async function resetDone() {
+  if (!confirm('Re-queue all completed jobs for re-transcoding?')) return;
+  const r = await fetch('/api/jobs/reset-done', {method:'POST'});
+  const d = await r.json();
+  toast(`Re-queued ${d.affected} completed jobs`, 'success'); loadJobs();
+}
+async function confirmWipeDb() {
+  if (state.serviceStatus !== 'stopped') { toast('Stop the service before wiping the database', 'error'); return; }
+  if (!confirm('Delete the entire database? The engine will rescan all files on next start.')) return;
+  if (!confirm('Are you absolutely sure? This cannot be undone.')) return;
+  try {
+    const r = await fetch('/api/jobs/wipe-db', {method:'POST'});
+    const d = await r.json();
+    if (r.ok) { toast(d.message, 'success'); document.getElementById('jobs-body').innerHTML = '<tr><td colspan="6" class="empty-state">Database wiped</td></tr>'; setText('nav-jobs-badge','0'); }
+    else toast(d.detail || 'Wipe failed', 'error');
+  } catch(e) { toast('Wipe failed: ' + e, 'error'); }
+}
+async function confirmResetAll() {
+  if (!confirm('Reset ALL jobs to pending?\nThis will re-transcode everything.')) return;
+  if (!confirm('Are you sure? This cannot be undone.')) return;
+  const r = await fetch('/api/jobs/reset-all', {method:'POST'});
+  const d = await r.json();
+  toast(`Reset ${d.affected} jobs to pending`, 'success'); loadJobs();
+}
+async function clearDone() {
+  const r = await fetch('/api/jobs/clear-done', {method:'POST'});
+  const d = await r.json();
+  toast(`Cleared ${d.affected} completed jobs`, 'success'); loadJobs();
+}
+
+// -- Config -----------------------------------------------------------------
+async function loadConfig() {
+  try {
+    const r = await fetch('/api/config');
+    const cfg = await r.json();
+    ['input_dir','output_dir','jobs','threads','cq','preset','rc',
+     'audio_bitrate','audio_filter','max_height','retry','retry_backoff',
+     'probesize','analyzeduration'].forEach(k => {
+      const el = document.getElementById('cfg-' + k);
+      if (el) el.value = cfg[k] !== undefined ? cfg[k] : '';
+    });
+    ['skip_existing','copy_all_subs','no_hwaccel','dry_run','tv_mode'].forEach(k => {
+      const el = document.getElementById('cfg-' + k);
+      if (el) el.checked = !!cfg[k];
+    });
+  } catch(e) { toast('Failed to load config', 'error'); }
+}
+async function saveConfig() {
+  const cfg = {};
+  ['input_dir','output_dir','jobs','threads','cq','preset','rc',
+   'audio_bitrate','audio_filter','max_height','retry','retry_backoff',
+   'probesize','analyzeduration'].forEach(k => {
+    const el = document.getElementById('cfg-' + k);
+    if (!el) return;
+    cfg[k] = el.type === 'number' ? Number(el.value) : el.value;
+  });
+  ['skip_existing','copy_all_subs','no_hwaccel','dry_run','tv_mode'].forEach(k => {
+    const el = document.getElementById('cfg-' + k);
+    if (el) cfg[k] = el.checked;
+  });
+  try {
+    const r = await fetch('/api/config', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(cfg)});
+    const d = await r.json();
+    if (d.ok) toast('Configuration saved', 'success');
+    else toast('Save failed', 'error');
+  } catch(e) { toast('Save failed: ' + e, 'error'); }
+}
+async function scanInput() {
+  try {
+    const r = await fetch('/api/scan');
+    const d = await r.json();
+    const wrap = document.getElementById('scan-result-wrap');
+    if (d.error) wrap.innerHTML = `<span class="scan-result" style="color:var(--red)">${esc(d.error)}</span>`;
+    else         wrap.innerHTML = `<span class="scan-result"><span class="num">${d.found}</span>&nbsp;files found</span>`;
+  } catch(e) { toast('Scan failed', 'error'); }
+}
+
+// -- Service ----------------------------------------------------------------
+async function serviceStart() {
+  try {
+    const r = await fetch('/api/service/start', {method:'POST'});
+    if (r.ok) toast('Service starting...', 'info');
+    else { const d = await r.json(); toast(d.detail || 'Failed to start', 'error'); }
+  } catch(e) { toast('Failed to start: ' + e, 'error'); }
+}
+async function serviceStop() {
+  try {
+    const r = await fetch('/api/service/stop', {method:'POST'});
+    if (r.ok) toast('Service stopping...', 'info');
+    else { const d = await r.json(); toast(d.detail || 'Failed to stop', 'error'); }
+  } catch(e) { toast('Failed to stop: ' + e, 'error'); }
+}
+
+// -- Toast ------------------------------------------------------------------
+function toast(msg, type) {
+  const c = document.getElementById('toast-container');
+  const el = document.createElement('div');
+  el.className = 'toast ' + (type||'info');
+  el.textContent = msg;
+  c.appendChild(el);
+  setTimeout(() => el.remove(), 3500);
+}
+
+// -- Helpers ----------------------------------------------------------------
+function setText(id, val)  { const el = document.getElementById(id); if (el) el.textContent = val; }
+function setClass(id, cls) { const el = document.getElementById(id); if (el) el.className = cls; }
+function fmtDur(s) {
+  s = Math.round(s);
+  const h=Math.floor(s/3600), m=Math.floor((s%3600)/60), sec=s%60;
+  if (h) return `${h}h${String(m).padStart(2,'0')}m${String(sec).padStart(2,'0')}s`;
+  if (m) return `${m}m${String(sec).padStart(2,'0')}s`;
+  return `${sec}s`;
+}
+function esc(s) {
+  return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function basename(p) { return String(p||'').split('/').pop() || p; }
+
+// -- Init -------------------------------------------------------------------
+document.addEventListener('DOMContentLoaded', () => {
+  const saved = localStorage.getItem('theme') || 'dark';
+  document.getElementById('theme-btn').textContent = saved === 'dark' ? '☀️' : '🌙';
+});
+loadConfig();
+wsConnect();
+</script>
+</body>
+</html>

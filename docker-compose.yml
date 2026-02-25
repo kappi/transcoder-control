@@ -1,0 +1,78 @@
+version: "3.9"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Transcoder Web Dashboard
+#
+# Prerequisites on the host:
+#   - Docker >= 24.0
+#   - NVIDIA Container Toolkit  (nvidia-ctk, nvidia-container-runtime)
+#   - Driver compatible with CUDA 12.3
+#
+# Quick start:
+#   docker compose up -d
+#   Open http://localhost:8080
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+  transcoder:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: transcoder-web
+    restart: unless-stopped
+
+    # ── NVIDIA GPU access ────────────────────────────────────────────────────
+    # Passes ALL available GPUs into the container.
+    # To restrict to a specific GPU, set device_ids: ['GPU-<uuid>']
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu, compute, video]
+
+    # ── Port ─────────────────────────────────────────────────────────────────
+    ports:
+      - "8880:8080"
+
+    # ── Volumes ──────────────────────────────────────────────────────────────
+    volumes:
+      # Source media (read-only is safer; transcode.py only reads from here)
+      - /movies:/input:ro
+
+      # Output directory (read-write; transcoded files written here)
+      - /movies-720p:/output:rw
+
+      # Persistent config and SQLite DB (survives container restarts)
+      - transcoder_config:/config:rw
+
+      # Log file directory
+      - transcoder_logs:/logs:rw
+
+    # ── Environment ──────────────────────────────────────────────────────────
+    environment:
+      - TRANSCODE_PY=/app/transcode.py
+      - CONFIG_FILE=/config/settings.json
+      - UI_STATE_FILE=/tmp/transcode_ui_state.json
+      - LOG_FILE=/logs/transcode.log
+      - STATE_DB=/config/transcode.db
+
+    # ── Resource limits (optional, uncomment to enforce) ─────────────────────
+    # mem_limit: 8g
+    # cpus: "8"
+
+    # ── Logging ──────────────────────────────────────────────────────────────
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "3"
+
+# ── Named volumes (Docker-managed) ───────────────────────────────────────────
+volumes:
+  transcoder_config:
+    driver: local
+  transcoder_logs:
+    driver: local
+

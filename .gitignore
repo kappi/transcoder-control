@@ -1,0 +1,19 @@
+# Output/input dirs (likely volume mounts, but just in case)
+/input/
+/output/
+
+# Runtime files
+*.log
+*.db
+*.json
+/config/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+
+# Docker
+*.env
+.env
