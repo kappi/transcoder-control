@@ -725,12 +725,18 @@ def build_video_filter(
     # nvidia-patch removes the 3-session NVENC limit so hwdec is safe to use.
     if has_scale_cuda and need_scale:
         if hwdec:
-            # Frame arrives as CUDA surface (nv12) — skip format/hwupload.
-            # hwdownload must target nv12 (the native CUDA surface format),
-            # then convert to yuv420p on CPU. Direct yuv420p download fails
-            # with "Invalid output format yuv420p for hwframe download".
+            # Frame arrives as CUDA surface — skip format/hwupload.
+            # CUDA surface format depends on bit depth:
+            #   8-bit source  → nv12  CUDA surface → hwdownload to nv12  → yuv420p
+            #   10-bit source → p010le CUDA surface → hwdownload to p010le → yuv420p
+            # Using the wrong download format causes:
+            #   "Invalid output format nv12/p010le for hwframe download"
+            if src_10bit:
+                dl_fmt = "p010le"
+            else:
+                dl_fmt = "nv12"
             vf = (f"scale_cuda=w=-2:h={max_height}:interp_algo=lanczos,"
-                  f"hwdownload,format=nv12,format=yuv420p")
+                  f"hwdownload,format={dl_fmt},format=yuv420p")
             return vf, ["-hwaccel", "cuda", "-hwaccel_output_format", "cuda"], label
         if src_10bit:
             # Normalize to p010le on CPU before upload so hwupload_cuda always
