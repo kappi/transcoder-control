@@ -3,10 +3,13 @@
 A self-hosted, GPU-accelerated video transcoding pipeline for pre-converting a movie/TV library to HEVC MP4 for Jellyfin direct play. Built for an NVIDIA GPU with a web dashboard for monitoring and control.
 
 ---
+
 ## Screenshots
 
 ![Dashboard](screenshots/dashboard.png)
+
 ---
+
 ## Features
 
 - **NVIDIA NVENC** hardware encoding (`hevc_nvenc`) — fast, efficient H.265 output
@@ -231,6 +234,64 @@ docker compose down
 docker compose build --no-cache
 docker compose up -d
 ```
+
+---
+
+## Usage
+
+### Web UI (primary)
+
+Start the container, then open the dashboard in your browser:
+```
+http://your-server-ip:8080
+```
+
+1. Go to **Settings** — set input/output directories, configure encoding options
+2. Click **Scan** to verify ffmpeg can see your files
+3. Click **▶ Start** — workers begin processing
+4. Monitor progress on the **Dashboard** tab
+5. Click **■ Stop** to drain gracefully — active files finish before the engine exits
+
+---
+
+### Terminal Monitor (alongside web UI)
+
+Attach a live curses dashboard to the running web UI session — read-only, safe to open and close at any time:
+
+```bash
+docker exec -it transcoder-web python3 /app/transcode_monitor.py
+```
+
+Keys: `Q` to quit (does not affect the running transcoder).
+
+Test it without a running instance:
+```bash
+docker exec -it transcoder-web python3 /app/transcode_monitor.py --demo
+```
+
+Custom state file path (if changed from default):
+```bash
+docker exec -it transcoder-web python3 /app/transcode_monitor.py --state-file /tmp/transcode_ui_state.json
+```
+
+---
+
+### Terminal UI (standalone, no web stack)
+
+Launch the transcoder directly from the terminal with a built-in curses dashboard — no FastAPI backend or browser needed:
+
+```bash
+docker exec -it transcoder-web python3 /app/transcode_ui.py   --input /input   --output /output   --jobs 4   --cq 32   --preset p4   --max-height 720
+```
+
+All `transcode.py` flags are forwarded transparently. Keys: `Q` to quit and stop transcoding.
+
+Demo mode (no files needed):
+```bash
+docker exec -it transcoder-web python3 /app/transcode_ui.py --demo
+```
+
+> **Note:** `transcode_ui.py` and the web UI both own the state file — do not run them simultaneously. Use `transcode_monitor.py` if the web UI is already running.
 
 ---
 

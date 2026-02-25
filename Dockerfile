@@ -55,7 +55,8 @@ WORKDIR /app
 COPY backend/        /app/backend/
 COPY frontend/       /app/frontend/
 COPY transcode.py    /app/transcode.py
-COPY transcode_ui.py /app/transcode_ui.py
+COPY transcode_ui.py     /app/transcode_ui.py
+COPY transcode_monitor.py /app/transcode_monitor.py
 
 # ── Persistent directories ────────────────────────────────────────────────────
 RUN mkdir -p /input /output /config /logs

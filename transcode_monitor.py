@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 """
-transcode_ui.py - Real-time terminal dashboard for transcode.py
+transcode_monitor.py - Read-only terminal dashboard for a running transcode.py instance.
 
-Launches transcode.py as a subprocess and renders a live curses TUI showing:
+Attaches to a running transcode.py / web UI session by reading the shared JSON state file.
+Does not launch or control anything — purely a monitor.
+
+Displays:
   - Per-worker job progress (filename, FPS, frames, elapsed time)
   - Completed jobs table (status, duration, outcome)
   - GPU metrics: utilization, power draw, VRAM used/total, temperature
@@ -10,13 +13,15 @@ Launches transcode.py as a subprocess and renders a live curses TUI showing:
   - Overall progress bar and ETA
 
 Usage:
-    python transcode_ui.py --input /media/src --output /media/out [all transcode.py flags]
-
-The UI reads a JSON state file written by transcode.py (--ui-state flag injected automatically).
-All original transcode.py flags are forwarded transparently.
+    python transcode_monitor.py
+    python transcode_monitor.py --state-file /tmp/transcode_ui_state.json
+    python transcode_monitor.py --demo   (simulation mode, no running instance needed)
 
 Requirements: Python 3.10+, stdlib only.
 GPU metrics via nvidia-smi (must be on PATH). CPU/RAM via /proc (Linux).
+
+Typically used inside the Docker container alongside the web UI:
+    docker exec -it transcoder-web python3 /app/transcode_monitor.py
 """
 
 import argparse
@@ -772,22 +777,6 @@ def render_loop(
 
 
 # ---------------------------------------------------------------------------
-# Transcode subprocess launcher with state relay
-# ---------------------------------------------------------------------------
-
-def launch_transcode(args_forward: list[str], state_file: str) -> subprocess.Popen:
-    """Launch transcode.py with forwarded args + injected --ui-state."""
-    cmd = [sys.executable, Path(__file__).parent / "transcode.py"] + args_forward
-    cmd += ["--ui-state", state_file]
-    proc = subprocess.Popen(
-        cmd,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
-    return proc
-
-
-# ---------------------------------------------------------------------------
 # Demo / simulation mode (when transcode.py is not present)
 # ---------------------------------------------------------------------------
 
@@ -908,20 +897,18 @@ def simulation_writer(state_file: str, stop: threading.Event) -> None:
 # Argument parsing
 # ---------------------------------------------------------------------------
 
-def parse_args() -> tuple[argparse.Namespace, list[str]]:
+def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Transcoding TUI dashboard. All unknown flags are forwarded to transcode.py.",
+        description="Read-only terminal monitor for a running transcode.py instance.",
         add_help=True,
     )
     parser.add_argument("--demo", action="store_true",
-        help="Run in demo/simulation mode without launching transcode.py")
+        help="Run in demo/simulation mode without a running instance")
     parser.add_argument("--state-file", default=UI_STATE_FILE,
-        help=f"Path for IPC state JSON (default: {UI_STATE_FILE})")
+        help=f"Path to state JSON written by transcode.py (default: {UI_STATE_FILE})")
     parser.add_argument("--no-gpu-metrics", action="store_true",
         help="Disable nvidia-smi polling")
-
-    known, forward = parser.parse_known_args()
-    return known, forward
+    return parser.parse_args()
 
 
 # ---------------------------------------------------------------------------
@@ -929,19 +916,12 @@ def parse_args() -> tuple[argparse.Namespace, list[str]]:
 # ---------------------------------------------------------------------------
 
 def main() -> None:
-    ui_args, forward_args = parse_args()
+    ui_args = parse_args()
     state_file = ui_args.state_file
-
-    # Clean up stale state file
-    try:
-        os.unlink(state_file)
-    except FileNotFoundError:
-        pass
 
     state   = UIState()
     metrics = HardwareMetrics()
     stop    = threading.Event()
-    proc    = None
 
     # Start hardware metrics poller
     if not ui_args.no_gpu_metrics:
@@ -957,70 +937,36 @@ def main() -> None:
     srt.start()
 
     if ui_args.demo:
-        # Simulation mode
+        # Simulation mode — no running instance needed
         sim_t = threading.Thread(
             target=simulation_writer, args=(state_file, stop), daemon=True
         )
         sim_t.start()
     else:
-        # Check transcode.py exists
-        transcode_py = Path(__file__).parent / "transcode.py"
-        if not transcode_py.exists():
-            print(f"ERROR: transcode.py not found at {transcode_py}")
-            print("Run with --demo to see the UI without transcoding.")
+        # Attach mode — state file must already exist (engine must be running)
+        if not Path(state_file).exists():
+            print(f"State file not found: {state_file}")
+            print("Is transcode.py running? Start it via the web UI first.")
+            print(f"Expected: {state_file}")
+            print("Run with --demo to test the monitor without a running instance.")
             sys.exit(1)
-
-        if not forward_args:
-            print("ERROR: No arguments forwarded to transcode.py (at minimum --input and --output).")
-            print("Example: python transcode_ui.py --input /src --output /dst")
-            print("         python transcode_ui.py --demo   (simulation mode)")
-            sys.exit(1)
-
-        proc = launch_transcode(forward_args, state_file)
-
-        # Monitor subprocess for premature exit
-        def watch_proc():
-            proc.wait()
-            if proc.returncode != 0:
-                state._lock and None  # force update
-            stop.set()
-
-        wt = threading.Thread(target=watch_proc, daemon=True)
-        wt.start()
 
     def handle_signal(signum, frame):
         stop.set()
-        if proc and proc.poll() is None:
-            proc.terminate()
 
     signal.signal(signal.SIGINT,  handle_signal)
     signal.signal(signal.SIGTERM, handle_signal)
 
-    # Run curses
+    # Run curses — proc=None since we don't own the engine process
     try:
-        curses.wrapper(render_loop, state, metrics, stop, proc)
+        curses.wrapper(render_loop, state, metrics, stop, None)
     except Exception as e:
         stop.set()
-        if proc and proc.poll() is None:
-            proc.terminate()
-        print(f"\nUI error: {e}")
+        print(f"\nMonitor error: {e}")
         raise
 
-    # Cleanup
     stop.set()
-    if proc and proc.poll() is None:
-        proc.terminate()
-        try:
-            proc.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-
-    try:
-        os.unlink(state_file)
-    except FileNotFoundError:
-        pass
-
-    print(f"\nSession ended. Done={state.done} Failed={state.failed} Skipped={state.skipped}")
+    print(f"\nMonitor detached. Done={state.done} Failed={state.failed} Skipped={state.skipped}")
 
 
 if __name__ == "__main__":
