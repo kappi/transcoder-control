@@ -150,6 +150,33 @@ Jellyfin picks up `.ass` sidecar files automatically for full subtitle styling.
 
 ---
 
+## Audio Handling
+
+All audio is re-encoded to **AAC-LC stereo 96k at 48kHz**.
+
+**Language selection:** If any preferred language track is found, only preferred language tracks are kept. Otherwise all tracks are kept. Preferred languages:
+
+| Code | Language |
+|------|----------|
+| `ces` / `cze` / `cs` | Czech |
+| `eng` / `en` | English |
+| `jpn` / `ja` | Japanese |
+| `zho` / `chi` / `zh` / `cmn` / `yue` | Chinese |
+
+**Surround downmix:** A pan filter mixes surround channels (FC, FL, FR, BL, BR, SL, SR) to stereo. Automatically stripped for stereo/mono sources where those channels don't exist.
+
+**Filter chain applied to all tracks:**
+```
+pan=stereo|FL=FC+0.60*FL+0.60*BL+0.60*SL|FR=FC+0.60*FR+0.60*BR+0.60*SR,acompressor=threshold=-18dB:ratio=2:attack=20:release=200:makeup=1,alimiter=limit=-1.5dB:level=true
+```
+- **Pan:** surround-to-stereo downmix — center channel (FC) added to both sides, surround/back channels mixed in at 60%
+- **Compressor:** threshold -18dB, ratio 2:1, attack 20ms, release 200ms, makeup gain 1
+- **Limiter:** -1.5dB ceiling
+
+Pan filter is automatically stripped for stereo/mono sources where surround channels don't exist.
+
+---
+
 ## Access
 
 This tool is designed for **local network use**. For remote access, [Tailscale](https://tailscale.com/) is recommended — zero config, no open ports.
@@ -187,23 +214,30 @@ services:
 
 ## Development
 
-Update frontend (volume-mounted, live reload):
-```bash
-# Just edit frontend/index.html and refresh browser
-```
+Both `transcode.py` and `frontend/index.html` are copied into the image at build time — they are **not** volume-mounted.
 
-Update transcode engine (hot-swap without rebuild):
+**Hot-swap without rebuild** (takes effect on next Start):
 ```bash
 docker cp transcode.py transcoder-web:/app/transcode.py
-# Takes effect on next Start
+docker cp frontend/index.html transcoder-web:/app/frontend/index.html
 ```
 
-Full rebuild:
+**Full rebuild:**
 ```bash
 docker compose down
 docker compose build --no-cache
 docker compose up -d
 ```
+
+---
+
+## Notes
+
+- **jellyfin-ffmpeg version:** pinned to `7.1.3-3` in the Dockerfile. Update `JFFMPEG_VERSION` to upgrade.
+- **Watchdog:** ffmpeg processes that produce no frame progress for 300 seconds are automatically killed and the job marked failed.
+- **Network filesystems:** `-movflags +faststart` is used by default, which avoids "unable to re-open output file" errors on NFS/SMB/CIFS output directories.
+- **`tonemapx` vs `tonemap_cuda`:** `tonemapx` is a CPU-only software filter despite the name. The GPU filter is `tonemap_cuda`. Do not confuse them.
+- **DVD audio:** language tags are often `und` (stored in IFO, not VOB) — all tracks are kept in this case, which is correct behaviour.
 
 ---
 
