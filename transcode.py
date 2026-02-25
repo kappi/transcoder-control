@@ -587,6 +587,23 @@ def detect_filter(ffmpeg_bin: str, filter_name: str) -> bool:
         return False
 
 
+def detect_hwdec_cuda(ffmpeg_bin: str) -> bool:
+    """
+    Detect whether CUDA hardware decode is available by probing ffmpeg decoders.
+    Checks for hevc_cuvid and h264_cuvid — the two most common source codecs.
+    Returns True if at least one cuvid decoder is present.
+    jellyfin-ffmpeg includes cuvid decoders by default when compiled with CUDA support.
+    """
+    try:
+        result = subprocess.run(
+            [ffmpeg_bin, "-decoders"],
+            capture_output=True, text=True, timeout=30,
+        )
+        return "hevc_cuvid" in result.stdout or "h264_cuvid" in result.stdout
+    except Exception:
+        return False
+
+
 # ---------------------------------------------------------------------------
 # Video filter chain builder
 # ---------------------------------------------------------------------------
@@ -600,10 +617,16 @@ def build_video_filter(
     force_cpu: bool,
     no_hwaccel: bool,
     has_tonemap_cuda: bool = False,
+    has_hwdec_cuda: bool = False,
 ) -> tuple[str, list[str], str]:
     """
     Returns (vf_string, extra_input_args, pipeline_label).
     extra_input_args: additional ffmpeg args before -i (e.g., hwaccel options).
+
+    When has_hwdec_cuda=True and GPU pipeline is active, hardware HEVC/H264
+    decode is used (-hwaccel cuda -hwaccel_output_format cuda). The decoded
+    frame arrives as a CUDA surface, so format= + hwupload_cuda are omitted.
+    This eliminates CPU decode load for 4K HDR content.
     """
     height = vs.get("height") or 0
     need_scale = height > max_height and height > 0
@@ -611,14 +634,17 @@ def build_video_filter(
     src_10bit = is_10bit_source(vs)
 
     # Build pipeline label for logging
+    gpu_pipeline = has_scale_cuda and not force_cpu and not no_hwaccel
+    hwdec = has_hwdec_cuda and gpu_pipeline
+    hwdec_tag = "+hwdec" if hwdec else ""
     if hdr and has_tonemap_cuda and has_scale_cuda and not force_cpu and not no_hwaccel:
-        label = "HDR->SDR(GPU-CUDA-tonemap_cuda+NVENC)"
+        label = f"HDR->SDR(GPU-CUDA-tonemap_cuda{hwdec_tag}+NVENC)"
     elif hdr:
         label = "HDR->SDR(CPU-zscale+tonemap+NVENC)"
     elif force_cpu or no_hwaccel:
         label = "SDR-CPU(scale+NVENC)"
     elif has_scale_cuda and need_scale:
-        label = "SDR-GPU(scale_cuda+NVENC)"
+        label = f"SDR-GPU(scale_cuda{hwdec_tag}+NVENC)"
     else:
         label = "SDR-direct(NVENC)"
 
@@ -628,25 +654,43 @@ def build_video_filter(
             # GPU CUDA tonemapping via jellyfin-ffmpeg tonemap_cuda filter.
             # tonemap_cuda is a true CUDA filter that operates on GPU surfaces.
             # tonemapx (different filter) is CPU-only despite the name.
-            # Pipeline:
-            #   1. Normalize to p010le on CPU (HDR is 10-bit)
-            #   2. hwupload_cuda -- move frame to GPU as CUDA surface
-            #   3. scale_cuda -- scale on GPU (outputs CUDA surface in p010le)
-            #   4. tonemap_cuda -- GPU HDR->SDR, operates on CUDA surface
-            #   5. hwdownload -- bring 8-bit yuv420p back to CPU for NVENC
+            #
+            # Two variants depending on has_hwdec_cuda:
+            #
+            # CPU decode (default):
+            #   format=p010le → hwupload_cuda → scale_cuda → tonemap_cuda → hwdownload
+            #
+            # CUDA hwdec (has_hwdec_cuda=True):
+            #   -hwaccel cuda -hwaccel_output_format cuda on input
+            #   Frame arrives as CUDA surface — skip format= + hwupload_cuda
+            #   scale_cuda → tonemap_cuda → hwdownload
+            #   Eliminates CPU HEVC decode — major load reduction for 4K HDR.
             if need_scale:
                 scale_step = f"scale_cuda=w=-2:h={max_height}:interp_algo=lanczos:format=p010le,"
             else:
                 scale_step = "scale_cuda=w=0:h=0:passthrough=1:format=p010le,"
-            vf = (
-                f"format=p010le,"
-                f"hwupload_cuda,"
-                f"{scale_step}"
-                f"tonemap_cuda=tonemap=bt2390:desat=0:format=yuv420p,"
-                f"hwdownload,"
-                f"format=yuv420p"
-            )
-            return vf, [], label
+
+            if hwdec:
+                # Frame already on GPU as CUDA surface — no format/hwupload needed
+                vf = (
+                    f"{scale_step}"
+                    f"tonemap_cuda=tonemap=bt2390:desat=0:format=yuv420p,"
+                    f"hwdownload,"
+                    f"format=yuv420p"
+                )
+                extra_input_args = ["-hwaccel", "cuda", "-hwaccel_output_format", "cuda"]
+            else:
+                # CPU decode: normalize to p010le, upload to GPU, process, download
+                vf = (
+                    f"format=p010le,"
+                    f"hwupload_cuda,"
+                    f"{scale_step}"
+                    f"tonemap_cuda=tonemap=bt2390:desat=0:format=yuv420p,"
+                    f"hwdownload,"
+                    f"format=yuv420p"
+                )
+                extra_input_args = []
+            return vf, extra_input_args, label
 
         # CPU fallback: zscale + hable tonemap
         filters = []
@@ -674,13 +718,20 @@ def build_video_filter(
         return vf, [], label
 
     # GPU scale path
-    # Use CPU decode + hwupload + scale_cuda + hwdownload.
-    # This avoids opening a second NVENC/CUDA decode session (-hwaccel cuda),
-    # which would consume one of the RTX 3060's 3 concurrent NVENC slots.
-    # hwupload copies the decoded CPU frame to GPU memory; scale_cuda then
-    # scales it on the GPU; hwdownload brings it back for hevc_nvenc.
-    # hevc_nvenc itself opens the only NVENC session = 1 session per worker.
+    # Default: CPU decode + hwupload + scale_cuda + hwdownload.
+    # With hwdec: -hwaccel cuda puts decoded frames directly on GPU as CUDA
+    # surfaces, skipping format= + hwupload_cuda entirely. Reduces CPU load
+    # significantly for high-bitrate SDR sources (VC-1, AVC, HEVC).
+    # nvidia-patch removes the 3-session NVENC limit so hwdec is safe to use.
     if has_scale_cuda and need_scale:
+        if hwdec:
+            # Frame arrives as CUDA surface (nv12) — skip format/hwupload.
+            # hwdownload must target nv12 (the native CUDA surface format),
+            # then convert to yuv420p on CPU. Direct yuv420p download fails
+            # with "Invalid output format yuv420p for hwframe download".
+            vf = (f"scale_cuda=w=-2:h={max_height}:interp_algo=lanczos,"
+                  f"hwdownload,format=nv12,format=yuv420p")
+            return vf, ["-hwaccel", "cuda", "-hwaccel_output_format", "cuda"], label
         if src_10bit:
             # Normalize to p010le on CPU before upload so hwupload_cuda always
             # receives a known-good format regardless of source codec/container.
@@ -949,6 +1000,7 @@ def transcode_job(
     worker_id: int,
     ui_state: "UIStateWriter" = None,
     has_tonemap_cuda: bool = False,
+    has_hwdec_cuda: bool = False,
 ) -> bool:
     """
     Transcode a single file. Returns True on success.
@@ -1001,22 +1053,35 @@ def transcode_job(
     vf, extra_input_args, pipeline_label = build_video_filter(
         vs, max_height, hdr, has_scale_cuda, has_zscale,
         force_cpu=False, no_hwaccel=no_hwaccel, has_tonemap_cuda=has_tonemap_cuda,
+        has_hwdec_cuda=has_hwdec_cuda,
     )
 
     # Calculate total frame count for progress reporting.
-    # nb_frames is exact but not always present (some containers omit it).
-    # Fallback: duration_ts / r_frame_rate gives a close estimate.
+    # Priority:
+    #   1. nb_frames from video stream (exact, present in AVI/MP4)
+    #   2. duration from video stream × r_frame_rate (MKV often has this)
+    #   3. duration from container format × r_frame_rate (MKV fallback —
+    #      MKV stores duration at format level, not stream level)
+    #   4. avg_frame_rate if r_frame_rate is a timebase (90000/1 etc.)
     total_frames = 0
     try:
+        # Resolve duration: stream first, then container format
+        dur_str = vs.get("duration")
+        if not dur_str or dur_str == "N/A":
+            dur_str = probe.get("format", {}).get("duration")
+
+        # Resolve fps: r_frame_rate preferred, avg_frame_rate as fallback
+        fps_str = vs.get("r_frame_rate") or vs.get("avg_frame_rate")
+
         if vs.get("nb_frames") and vs["nb_frames"] != "N/A":
             total_frames = int(vs["nb_frames"])
-        elif vs.get("duration") and vs.get("r_frame_rate"):
-            dur = float(vs["duration"])
-            num, den = vs["r_frame_rate"].split("/")
-            fps_src = float(num) / float(den)
+        elif dur_str and fps_str and dur_str != "N/A":
+            dur = float(dur_str)
+            num, den = fps_str.split("/")
+            fps_src = float(num) / float(den) if float(den) else 0
             # Sanity check: real frame rates are under 120fps.
-            # Timebases like 90000/1 would give absurd counts -- skip them.
-            if fps_src < 120:
+            # Timebases like 90000/1 would give absurd counts — skip them.
+            if 1 <= fps_src <= 120:
                 total_frames = int(dur * fps_src)
     except Exception:
         total_frames = 0
@@ -1371,6 +1436,7 @@ def worker_thread(
     stop_event: threading.Event,
     ui_state: UIStateWriter,
     has_tonemap_cuda: bool = False,
+    has_hwdec_cuda: bool = False,
 ) -> None:
     while not stop_event.is_set():
         try:
@@ -1399,6 +1465,7 @@ def worker_thread(
             src_path, out_dir, out_file, args,
             has_scale_cuda, has_zscale, worker_fps, worker_id,
             ui_state=ui_state, has_tonemap_cuda=has_tonemap_cuda,
+            has_hwdec_cuda=has_hwdec_cuda,
         )
 
         duration = time.monotonic() - t_start
@@ -1475,9 +1542,15 @@ def main() -> None:
     has_scale_cuda    = detect_filter(args.ffmpeg, "scale_cuda")    and not args.no_hwaccel
     has_zscale        = detect_filter(args.ffmpeg, "zscale")
     has_tonemap_cuda  = detect_filter(args.ffmpeg, "tonemap_cuda")  and not args.no_hwaccel
+    # hwdec: detect CUDA hardware decoder availability by probing the decoder list.
+    # Only enabled when GPU pipeline is active (no_hwaccel=False).
+    # nvidia-patch removes the 3-session NVENC limit so hwdec no longer
+    # competes with NVENC sessions — all workers can decode on GPU freely.
+    has_hwdec_cuda    = detect_hwdec_cuda(args.ffmpeg)              and not args.no_hwaccel
     logger.info(
         f"Filter availability: scale_cuda={has_scale_cuda} "
-        f"zscale={has_zscale} tonemap_cuda={has_tonemap_cuda}"
+        f"zscale={has_zscale} tonemap_cuda={has_tonemap_cuda} "
+        f"hwdec_cuda={has_hwdec_cuda}"
     )
 
     # Connect to DB
@@ -1549,7 +1622,7 @@ def main() -> None:
             target=worker_thread,
             args=(job_queue, args, has_scale_cuda, has_zscale,
                   progress, worker_fps, wid, stop_event, ui_state,
-                  has_tonemap_cuda),
+                  has_tonemap_cuda, has_hwdec_cuda),
             daemon=True,
             name=f"worker-{wid}",
         )
